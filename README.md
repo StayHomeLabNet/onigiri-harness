@@ -1,6 +1,7 @@
 # 🍙 Onigiri Harness
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![CI](https://github.com/StayHomeLabNet/onigiri-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/StayHomeLabNet/onigiri-harness/actions/workflows/ci.yml)
 
 macOS ネイティブのローカル AI ハーネス。Legacy Phase 11 以降ではアプリ画面からローカルテキスト / Markdown / PDF 資料やフォルダを追加し、関連チャンクを会話に差し込む簡易 RAG を使えます。回答ごとに使われた根拠候補を保持し、回答下の `[1]` からチャンク詳細を開けます。検索ではチャンク overlap、タイトル重み付け、完全一致ボーナス、日本語 2/3-gram に加え、LM Studio / Ollama などの OpenAI-compatible `/v1/embeddings` が使える場合は embedding 類似度も併用します。資料一覧、個別削除、プレビュー、関連チャンク確認、サーバー再起動後の資料復元にも対応しています。
 
@@ -68,6 +69,16 @@ open /tmp/onigiri-harness-build/Onigiri.app
 アプリで利用可能と表示されたら「こんにちは」を送信します。返答は生成に合わせて画面へ表示され、続けて送った質問ではそれまでの会話が参照されます。「資料/フォルダを追加」から UTF-8 のテキスト / Markdown / PDF ファイル、またはそれらを含むフォルダを追加すると、質問に関連するチャンクが provider へ渡され、回答内に `[1]` のような引用番号が出ます。フォルダ指定時は `.txt` / `.text` / `.md` / `.markdown` / `.pdf` を再帰的に取り込みます。資料がヒットした回答では、回答本文の下に「この回答の根拠」が表示され、`[1]` の行を押すとチャンク本文を開けます。「資料一覧」ではプレビュー確認と個別削除ができます。「関連チャンク」では、入力中の質問または直近のユーザー発話に一致した資料チャンク、引用番号、スコアを確認できます。検索はタイトル一致を強く評価し、長い資料では前チャンク末尾を overlap として引き継ぎます。「新しい会話」を押すと画面とモデルの履歴を破棄します。サーバーは最初のターミナルで Control-C を押すと停止します。アプリを閉じてもサーバーは独立して動作します。
 
 OneDrive の拡張属性によるコード署名エラーを避けるため、生成物は `/tmp/onigiri-harness-build` に置きます。再起動や一時ファイル削除後は再ビルドしてください。
+
+配布候補のRelease構成アプリ、ZIP、SHA-256 checksumを作る場合は次を実行します。Developer ID署名前の成果物なので、ファイル名には`unsigned`が付きます。
+
+```sh
+bash scripts/check-repository.sh
+ONIGIRI_BUILD_CONFIGURATION=release zsh scripts/package-app.sh
+shasum -a 256 -c release/*.sha256
+```
+
+versionはリポジトリ直下の`VERSION`で管理します。詳しい環境変数とCIの内容は[再現可能なビルドとCI](docs/BUILD_AND_CI.md)を参照してください。
 
 Xcode では `Package.swift` を開き、`OnigiriApp` または `OnigiriServer` の Scheme を選べます。最初は上記のターミナル手順で起動するのが確実です。
 

@@ -17,9 +17,10 @@ Pull Requestを作る前に次を実行してください。
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+bash scripts/check-repository.sh
 swift test --scratch-path /tmp/onigiri-tests
-zsh scripts/build-app.sh
-codesign --verify --deep --strict /tmp/onigiri-harness-build/Onigiri.app
+ONIGIRI_BUILD_CONFIGURATION=release zsh scripts/package-app.sh
+shasum -a 256 -c release/*.sha256
 ```
 
 変更内容に応じて、`docs/ACCEPTANCE_TEST_PLAN.md`の関連項目も確認してください。

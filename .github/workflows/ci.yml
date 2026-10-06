@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-safety:
+    name: Repository safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check tracked files and repository content
+        run: bash scripts/check-repository.sh
+      - name: Scan Git history for secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-test-package:
+    name: Build, test, and package
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Record toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Run tests
+        run: swift test --scratch-path "$RUNNER_TEMP/onigiri-tests"
+      - name: Build release app and checksummed artifact
+        env:
+          ONIGIRI_BUILD_DIR: ${{ runner.temp }}/onigiri-build
+          ONIGIRI_BUILD_CONFIGURATION: release
+          ONIGIRI_BUILD_NUMBER: ${{ github.run_number }}
+          ONIGIRI_ARTIFACT_OUTPUT_DIR: ${{ runner.temp }}/onigiri-artifacts
+          ONIGIRI_ARTIFACT_QUALIFIER: unsigned
+        run: zsh scripts/package-app.sh
+      - name: Verify bundle and checksum
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/onigiri-artifacts
+        run: |
+          codesign --verify --deep --strict "$RUNNER_TEMP/onigiri-build/Onigiri.app"
+          cd "$ARTIFACT_DIR"
+          shasum -a 256 -c ./*.sha256
+      - name: Read version
+        id: version
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Onigiri-Harness-${{ steps.version.outputs.version }}-macOS-arm64-unsigned
+          path: |
+            ${{ runner.temp }}/onigiri-artifacts/*.zip
+            ${{ runner.temp }}/onigiri-artifacts/*.sha256
+          if-no-files-found: error
+          retention-days: 14
