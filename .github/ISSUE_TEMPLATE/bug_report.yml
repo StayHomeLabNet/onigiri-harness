@@ -1,0 +1,59 @@
+name: Bug report
+description: 再現可能な不具合を報告する
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        APIキー、会話、個人資料、バックアップを貼り付けないでください。セキュリティ問題は公開IssueではなくSECURITY.mdの手順で報告してください。
+  - type: input
+    id: version
+    attributes:
+      label: Onigiri Harness version
+      placeholder: 例 0.1.0 または commit SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 実行環境
+      description: macOS、Mac、利用Providerとモデルを記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した結果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の結果
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 秘密情報を除いたログ
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 確認
+      options:
+        - label: 既存Issueを検索しました
+          required: true
+        - label: APIキー、個人資料、会話などを除外しました
+          required: true

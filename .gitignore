@@ -1,0 +1,14 @@
+.build/
+.swiftpm/
+.DS_Store
+.env
+.env.*
+!.env.example
+DerivedData/
+*.xcarchive
+*.dSYM/
+*.dmg
+*.zip
+release/
+artifacts/
+Onigiri-*.json

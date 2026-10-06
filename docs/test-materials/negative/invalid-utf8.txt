@@ -1,0 +1,1 @@
+Onigiri invalid UTF-8 fixture: ÿþú€
