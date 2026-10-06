@@ -1,6 +1,6 @@
-# GitHub公開・配布計画
+# GitHubソース公開計画
 
-Onigiri HarnessをGitHubでソース公開し、GitHub ReleasesからmacOSアプリを配布するための準備項目です。リポジトリの公開やReleaseの作成は、以下を満たした後に行います。
+Onigiri HarnessをGitHubでソース公開するための計画です。Apple Developer Programへ加入していない間は、未署名macOSバイナリを一般配布しません。利用者は公開ソースをcloneしてローカルビルドします。
 
 ## 1. 公開方針を決める
 
@@ -26,20 +26,19 @@ Onigiri HarnessをGitHubでソース公開し、GitHub ReleasesからmacOSアプ
 - version、build番号、tag、成果物名を一つのリリース番号へ揃える
 - 成果物ごとにSHA-256 checksumを生成する
 
-## 4. macOS配布物
+## 4. macOSローカルビルド
 
-- Release構成でUniversalまたはApple Silicon向けアプリを作る
-- Developer ID Applicationで署名し、Hardened Runtimeを有効にする
-- Appleへ公証し、ticketをstapleする
-- DMGまたはZIPを作り、Gatekeeper検証を行う
-- 別Macでダウンロード、初回起動、モデル接続、会話、RAGを確認する
+- Apple SiliconとmacOS 26以上を必要環境として明記する
+- 公開ソースからテストとローカル用アプリを再現できるようにする
+- CIの未署名artifactは再現性検証専用とし、一般配布物として案内しない
+- Developer ID署名とApple公証は、Apple Developer Programへ加入した場合の任意対応として保持する
 
-## 5. GitHub Release
+## 5. Source Release
 
 - SemVer形式のtagを作る
 - 変更点、動作環境、インストール方法、既知の制約をRelease Notesへ記載する
-- 署名・公証済みアプリ、checksum、必要に応じてSBOMを添付する
-- 公開後にREADMEのダウンロード先と検証方法を更新する
+- GitHubがtagから生成するソースアーカイブだけを公開対象にする
+- READMEからclone、テスト、ローカルビルド方法を案内する
 - 問題発生時のRelease取り下げ、旧版へのロールバック、修正版公開手順を確認する
 
 ## 現在の準備状況
@@ -48,12 +47,12 @@ Onigiri HarnessをGitHubでソース公開し、GitHub ReleasesからmacOSアプ
 - 自動テスト: 84件合格
 - ローカル署名検証: 合格
 - Gitリポジトリ初期化: 完了（`main`、`origin`設定済み）
-- GitHub公開先: `StayHomeLabNet/onigiri-harness`のPrivateリポジトリを作成し、初回commitをpush済み
+- GitHub公開先: `StayHomeLabNet/onigiri-harness`
 - OSSライセンス: Apache-2.0に決定、公式LICENSEとNOTICEを配置済み
 - CONTRIBUTING・SECURITY・行動規範・Issue／Pull Requestテンプレート: 作成済み
 - 作業ツリーの秘密情報・個人ローカルパス検査: 合格
-- Developer ID署名・Apple公証: 自動化実装済み。証明書・公証資格情報の準備と実署名、別Mac検証が未実施
+- Developer ID署名・Apple公証: 自動化実装済みだが、Apple Developer Programへ加入しない方針のため任意・保留
 - GitHub Actions: CI workflowを整備（macOS 26／Xcode 26.6、テスト、Releaseビルド、Gitleaks、ZIP、SHA-256）
-- Signed Distribution workflow: 手動実行でDeveloper ID署名、Hardened Runtime、公証、staple、Gatekeeper検証、ZIP、SHA-256を行う
-- GitHub Releases: 未実施
-- Private vulnerability reporting: Publicリポジトリだけで利用可能なため、公開へ切り替える直前に有効化する
+- Optional Signed Distribution workflow: 将来加入した場合だけ手動実行する
+- GitHub Releases: 未実施。作成する場合はソースアーカイブのみ
+- Private vulnerability reporting: Public変更後に有効化する

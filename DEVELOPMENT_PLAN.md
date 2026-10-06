@@ -15,7 +15,7 @@
 
 ## 現在地
 
-現在は、基盤、複数provider、Product Profiles、Chat Runtime、共通RAG、複数CLIのAIタスク／通常チャット連携、Decision Model Lab、OpenAI Compatibility API、セキュリティ、データ移行、最終手動受入まで実装済みです。次は配布用署名、公証、パッケージ作成へ進みます。
+現在は、基盤、複数provider、Product Profiles、Chat Runtime、共通RAG、複数CLIのAIタスク／通常チャット連携、Decision Model Lab、OpenAI Compatibility API、セキュリティ、データ移行、最終手動受入、再現可能なビルドとCIまで実装済みです。GitHubではソースコードを公開し、未署名macOSバイナリは一般配布しません。
 
 | Parent Phase | 状態 | 概要 |
 | --- | --- | --- |
@@ -24,9 +24,9 @@
 | Parent Phase 2 — AI Agent Integration | 完了 | Codex inbound／MCPと、Codex・Antigravity・Claude CodeのAIタスクを実装済み |
 | Parent Phase 3 — Decision Models & Experiments | 完了 | Decision Model Lab、比較評価、confidence routingを実装済み |
 | Parent Phase 4 — Local AI Gateway | 完了 | OpenAI Compatibility APIとCLI Chat Providersを実装済み |
-| Parent Phase 5 — Productization | 進行中 | 5.1、5.1a、5.1bを完了。次は署名、公証、配布 |
+| Parent Phase 5 — Productization | 進行中 | 5.1系、5.2a、5.2bを完了。次はGitHubソース公開と公開後検証 |
 
-次に着手するのは **Parent Phase 5 / Sub-phase 5.2 — Distribution & Release** です。
+次に着手するのは **Parent Phase 5 / Sub-phase 5.2d — GitHub Source Publication** です。
 
 ## Legacy Phaseとの対応
 
@@ -328,30 +328,29 @@ Release blocker解消後の最終受入です。Profileの保存と再起動復�
 - 会話の停止、書出し、履歴復元を実UIで確認する
 - 配布判定に残る既知問題と制約を確定する
 
-### Sub-phase 5.2 — Distribution & Release
+### Sub-phase 5.2 — GitHub Publication & Release Engineering
 
-状態: 計画済み
+状態: 進行中
 
-配布用署名、公証、初回起動案内、診断書き出し、更新方針を整えます。同時にGitHubでのソース公開とGitHub Releasesでのバイナリ配布を可能にします。公開リポジトリ向けにライセンス、貢献手順、セキュリティ報告窓口、Issue／Pull Requestテンプレート、CIを整備し、履歴を含む秘密情報検査を通します。対応macOSとApple Intelligence要件を明示し、Apple FM、LM Studio、Ollama、利用可能なCLI providerの基本シナリオをリリース前に実機確認します。
+GitHubでApache-2.0のソースコードを公開し、第三者がclone、テスト、ローカルビルドできる状態を整えます。Apple Developer Programへ加入していない間は未署名macOSバイナリをGitHub Releasesへ掲載しません。Developer ID署名・公証の自動化は将来の任意対応として保持します。
 
 作業区分:
 
 - Sub-phase 5.2a — Repository Readiness（完了）: `StayHomeLabNet/onigiri-harness`をPrivateで作成し、`main`へ初回commitをpush。Apache-2.0、除外規則、秘密情報検査、README、貢献／セキュリティ文書、Issue／Pull Requestテンプレートを整備済み
 - Sub-phase 5.2b — Reproducible Build & CI（完了）: `VERSION`を単一のversion源とし、クリーンbuild directoryでのReleaseビルド、標準化したZIP名、SHA-256、公開前検査を実装。GitHub ActionsはmacOS 26 ARM64／Xcode 26.6でテスト・ビルド・成果物検証を行い、Git履歴を含む秘密情報検査を行う
-- Sub-phase 5.2c — Signed macOS Distribution（実装完了・実署名待ち）: Developer ID署名、Hardened Runtime、公証、staple、ZIP、Gatekeeper検証を自動化済み。Apple Developerの証明書・公証資格情報を設定し、生成物を別Macで確認すれば完了
-- Sub-phase 5.2d — GitHub Release: tag、変更履歴、署名・公証済み成果物、checksum、既知の制約をGitHub Releasesへ掲載
+- Sub-phase 5.2c — Signed macOS Distribution（任意・保留）: Developer ID署名、Hardened Runtime、公証、staple、ZIP、Gatekeeper検証の自動化は実装済み。Apple Developer Programへ加入する場合だけ実行する
+- Sub-phase 5.2d — GitHub Source Publication: 公開前検査、Publicへの可視性変更、Private vulnerability reporting、README・ライセンス・貢献導線、公開状態を確認する。GitHub Releaseを作る場合は当面ソースアーカイブだけを扱う
 - Sub-phase 5.2e — Public Launch Verification: 公開リポジトリからのclone、ビルド、インストール、初回会話、RAG、更新・ロールバック手順を第三者視点で確認
 
 完了条件:
 
-- 署名・公証済みアプリを別Macで起動できる
 - 初回設定から最初の会話・資料検索まで案内される
 - 主要providerのスモークテストが成功する
 - 診断情報から秘密情報を除外して書き出せる
 - 公開GitHubリポジトリをクリーンcloneしてテストとアプリビルドを再現できる
 - ライセンス、CONTRIBUTING、SECURITY、Issue／Pull Requestテンプレートが公開される
 - CIがテスト、ビルド、秘密情報・不要ファイル検査に合格する
-- GitHub Releaseから署名・公証済み成果物とchecksumを取得できる
+- GitHubの公開ソースからローカル用アプリを再現できる
 - 公開履歴にAPIキー、個人資料、会話、ローカルパス、バックアップが含まれない
 
 ## 実装順序と依存関係

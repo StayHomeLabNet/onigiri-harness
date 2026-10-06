@@ -1,5 +1,7 @@
 # 署名・公証済みmacOS配布
 
+この機能は任意の将来対応です。現在の公開方針はGitHubでのソースコード公開であり、Apple Developer Programへ加入していない間は署名済み・未署名を問わずmacOSバイナリをGitHub Releasesへ掲載しません。
+
 ## 出力
 
 `scripts/release-app.sh`は次の順に配布物を作成します。

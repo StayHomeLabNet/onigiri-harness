@@ -6,7 +6,7 @@
 
 ## Reporting a vulnerability
 
-脆弱性、秘密情報の露出、認証回避、任意コード実行、意図しない外部通信を見つけた場合は、Issueへ詳細を書かないでください。Private開発中はリポジトリ所有者へ既存の非公開連絡手段で報告してください。リポジトリをPublicへ変更する前にGitHubのPrivate vulnerability reportingを有効にし、この文書とIssueテンプレートへ報告リンクを追加します。
+脆弱性、秘密情報の露出、認証回避、任意コード実行、意図しない外部通信を見つけた場合は、公開Issueへ詳細を書かないでください。[GitHubのPrivate vulnerability reporting](https://github.com/StayHomeLabNet/onigiri-harness/security/advisories/new)から非公開で報告してください。
 
 報告には次を含めてください。
 

@@ -1,4 +1,4 @@
-name: Signed macOS Distribution
+name: Optional Signed macOS Distribution
 
 on:
   workflow_dispatch:

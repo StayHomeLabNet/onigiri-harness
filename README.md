@@ -32,10 +32,11 @@ OnigiriServer (別プロセス / Network.framework)
 
 ## 起動する
 
-ターミナルでこのフォルダへ移動し、サーバーを起動します。
+初回はリポジトリをcloneし、サーバーを起動します。
 
 ```sh
-cd "Onigiri Harness"
+git clone https://github.com/StayHomeLabNet/onigiri-harness.git
+cd onigiri-harness
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 swift run --scratch-path /tmp/onigiri-harness-build OnigiriServer
 ```
@@ -61,7 +62,7 @@ swift run --scratch-path /tmp/onigiri-harness-build OnigiriServer
 別のターミナルでアプリをビルドして起動します。
 
 ```sh
-cd "Onigiri Harness"
+cd onigiri-harness
 zsh scripts/build-app.sh
 open /tmp/onigiri-harness-build/Onigiri.app
 ```
@@ -81,6 +82,12 @@ shasum -a 256 -c release/*.sha256
 versionはリポジトリ直下の`VERSION`で管理します。詳しい環境変数とCIの内容は[再現可能なビルドとCI](docs/BUILD_AND_CI.md)を参照してください。
 
 Developer ID証明書を使った署名、Apple公証、staple、Gatekeeper検証は`scripts/release-app.sh`へまとめています。Apple側の準備、ローカル実行、GitHub Actions Secretsの登録方法は[署名・公証済みmacOS配布](docs/SIGNED_DISTRIBUTION.md)を参照してください。
+
+## 公開と配布の方針
+
+このリポジトリはApache-2.0でソースコードを公開します。Apple Developer Programへ加入していない間は、GitHub Releasesへ未署名のmacOSアプリを掲載しません。利用する場合はソースをcloneし、上記の手順でローカルビルドしてください。CIが保存する`unsigned` artifactはビルド再現性を確認するための検証成果物であり、一般配布用アプリではありません。
+
+Developer ID署名・Apple公証の自動化は将来利用できるよう保持していますが、ソース公開の必須条件にはしません。
 
 Xcode では `Package.swift` を開き、`OnigiriApp` または `OnigiriServer` の Scheme を選べます。最初は上記のターミナル手順で起動するのが確実です。
 
@@ -159,7 +166,7 @@ HTTP は loopback のみ、1 接続 1 リクエスト、Content-Length 形式、
 
 ## 次の段階
 
-次のParent Phase 5 / Sub-phase 5.2では、Developer ID署名とApple公証に加え、GitHubでのソース公開とGitHub Releasesによる配布を整備します。公開前の具体的な確認項目は[GitHub公開・配布計画](docs/GITHUB_RELEASE_PLAN.md)にまとめています。
+Parent Phase 5 / Sub-phase 5.2では、GitHubでのソース公開、再現可能なビルド、CI、公開後の検証を整備します。公開方針と確認項目は[GitHub公開計画](docs/GITHUB_RELEASE_PLAN.md)にまとめています。
 
 ## ライセンス
 
@@ -247,7 +254,7 @@ curl http://127.0.0.1:18080/v1/chat/completions \
 
 同梱OnigiriServerが終了している場合は、画面左上の「再確認」でサーバーを再起動して接続を回復します。アプリを再ビルドした場合は、以前のOnigiriを完全に終了してから新しい`.app`を開いてください。
 
-今後は、大きな到達点を`Parent Phase`、実装単位を`Sub-phase`と表記します。次は`Parent Phase 5 / Sub-phase 5.2 — Distribution & Release`です。
+今後は、大きな到達点を`Parent Phase`、実装単位を`Sub-phase`と表記します。現在は`Parent Phase 5 / Sub-phase 5.2 — GitHub Source Publication`です。
 
 全体計画、各Parent Phase／Sub-phaseの完了条件、依存関係は [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) を参照してください。
 
@@ -275,4 +282,4 @@ macOS 27.0 / Xcode 27.0 で、次を確認済みです。
 - embedding 類似度でキーワード不一致の資料を拾える hybrid 検索のテストを確認
 - Ollama `granite4.1:8b` で資料由来の「金色のおにぎり」と引用 `[1]` を含む RAG 応答を確認
 
-macOS 26 での実機検証、配布用署名・公証は未実施です。
+Developer IDによる配布用署名・公証は任意の将来対応として保留しています。
