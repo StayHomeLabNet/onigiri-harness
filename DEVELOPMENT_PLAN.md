@@ -24,9 +24,9 @@
 | Parent Phase 2 — AI Agent Integration | 完了 | Codex inbound／MCPと、Codex・Antigravity・Claude CodeのAIタスクを実装済み |
 | Parent Phase 3 — Decision Models & Experiments | 完了 | Decision Model Lab、比較評価、confidence routingを実装済み |
 | Parent Phase 4 — Local AI Gateway | 完了 | OpenAI Compatibility APIとCLI Chat Providersを実装済み |
-| Parent Phase 5 — Productization | 進行中 | 5.1系、5.2a、5.2bを完了。次はGitHubソース公開と公開後検証 |
+| Parent Phase 5 — Productization | 進行中 | 5.1系、5.2a、5.2b、5.2dを完了。次は公開後検証 |
 
-次に着手するのは **Parent Phase 5 / Sub-phase 5.2d — GitHub Source Publication** です。
+次に着手するのは **Parent Phase 5 / Sub-phase 5.2e — Public Launch Verification** です。
 
 ## Legacy Phaseとの対応
 
@@ -339,7 +339,7 @@ GitHubでApache-2.0のソースコードを公開し、第三者がclone、テ�
 - Sub-phase 5.2a — Repository Readiness（完了）: `StayHomeLabNet/onigiri-harness`をPrivateで作成し、`main`へ初回commitをpush。Apache-2.0、除外規則、秘密情報検査、README、貢献／セキュリティ文書、Issue／Pull Requestテンプレートを整備済み
 - Sub-phase 5.2b — Reproducible Build & CI（完了）: `VERSION`を単一のversion源とし、クリーンbuild directoryでのReleaseビルド、標準化したZIP名、SHA-256、公開前検査を実装。GitHub ActionsはmacOS 26 ARM64／Xcode 26.6でテスト・ビルド・成果物検証を行い、Git履歴を含む秘密情報検査を行う
 - Sub-phase 5.2c — Signed macOS Distribution（任意・保留）: Developer ID署名、Hardened Runtime、公証、staple、ZIP、Gatekeeper検証の自動化は実装済み。Apple Developer Programへ加入する場合だけ実行する
-- Sub-phase 5.2d — GitHub Source Publication: 公開前検査、Publicへの可視性変更、Private vulnerability reporting、README・ライセンス・貢献導線、公開状態を確認する。GitHub Releaseを作る場合は当面ソースアーカイブだけを扱う
+- Sub-phase 5.2d — GitHub Source Publication（完了）: 公開前検査とCIに合格後、`StayHomeLabNet/onigiri-harness`をPublicへ変更。Private vulnerability reporting、README・ライセンス・貢献導線、認証なしのfresh cloneを確認済み。GitHub Releaseを作る場合は当面ソースアーカイブだけを扱う
 - Sub-phase 5.2e — Public Launch Verification: 公開リポジトリからのclone、ビルド、インストール、初回会話、RAG、更新・ロールバック手順を第三者視点で確認
 
 完了条件:

@@ -47,7 +47,7 @@ Onigiri HarnessをGitHubでソース公開するための計画です。Apple De
 - 自動テスト: 84件合格
 - ローカル署名検証: 合格
 - Gitリポジトリ初期化: 完了（`main`、`origin`設定済み）
-- GitHub公開先: `StayHomeLabNet/onigiri-harness`
+- GitHub公開先: `StayHomeLabNet/onigiri-harness`をPublicで公開済み
 - OSSライセンス: Apache-2.0に決定、公式LICENSEとNOTICEを配置済み
 - CONTRIBUTING・SECURITY・行動規範・Issue／Pull Requestテンプレート: 作成済み
 - 作業ツリーの秘密情報・個人ローカルパス検査: 合格
@@ -55,4 +55,5 @@ Onigiri HarnessをGitHubでソース公開するための計画です。Apple De
 - GitHub Actions: CI workflowを整備（macOS 26／Xcode 26.6、テスト、Releaseビルド、Gitleaks、ZIP、SHA-256）
 - Optional Signed Distribution workflow: 将来加入した場合だけ手動実行する
 - GitHub Releases: 未実施。作成する場合はソースアーカイブのみ
-- Private vulnerability reporting: Public変更後に有効化する
+- Private vulnerability reporting: 有効化済み
+- 公開確認: 認証なしのfresh cloneとリポジトリ安全検査に合格、GitHub Community Profile 100%
