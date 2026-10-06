@@ -80,6 +80,8 @@ shasum -a 256 -c release/*.sha256
 
 versionはリポジトリ直下の`VERSION`で管理します。詳しい環境変数とCIの内容は[再現可能なビルドとCI](docs/BUILD_AND_CI.md)を参照してください。
 
+Developer ID証明書を使った署名、Apple公証、staple、Gatekeeper検証は`scripts/release-app.sh`へまとめています。Apple側の準備、ローカル実行、GitHub Actions Secretsの登録方法は[署名・公証済みmacOS配布](docs/SIGNED_DISTRIBUTION.md)を参照してください。
+
 Xcode では `Package.swift` を開き、`OnigiriApp` または `OnigiriServer` の Scheme を選べます。最初は上記のターミナル手順で起動するのが確実です。
 
 Serverは既定で`127.0.0.1`だけをlistenします。LANなどへ明示的に公開する場合は、外部待受とBearer認証を同時に設定する必要があります。

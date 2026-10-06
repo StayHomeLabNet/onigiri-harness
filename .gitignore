@@ -7,6 +7,11 @@
 DerivedData/
 *.xcarchive
 *.dSYM/
+*.p12
+*.cer
+*.p8
+*.keychain
+*.keychain-db
 *.dmg
 *.zip
 release/

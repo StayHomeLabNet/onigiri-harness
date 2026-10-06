@@ -52,7 +52,8 @@ Onigiri HarnessをGitHubでソース公開し、GitHub ReleasesからmacOSアプ
 - OSSライセンス: Apache-2.0に決定、公式LICENSEとNOTICEを配置済み
 - CONTRIBUTING・SECURITY・行動規範・Issue／Pull Requestテンプレート: 作成済み
 - 作業ツリーの秘密情報・個人ローカルパス検査: 合格
-- Developer ID署名・Apple公証: 未実施
+- Developer ID署名・Apple公証: 自動化実装済み。証明書・公証資格情報の準備と実署名、別Mac検証が未実施
 - GitHub Actions: CI workflowを整備（macOS 26／Xcode 26.6、テスト、Releaseビルド、Gitleaks、ZIP、SHA-256）
+- Signed Distribution workflow: 手動実行でDeveloper ID署名、Hardened Runtime、公証、staple、Gatekeeper検証、ZIP、SHA-256を行う
 - GitHub Releases: 未実施
 - Private vulnerability reporting: Publicリポジトリだけで利用可能なため、公開へ切り替える直前に有効化する

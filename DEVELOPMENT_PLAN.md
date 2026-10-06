@@ -338,7 +338,7 @@ Release blocker解消後の最終受入です。Profileの保存と再起動復�
 
 - Sub-phase 5.2a — Repository Readiness（完了）: `StayHomeLabNet/onigiri-harness`をPrivateで作成し、`main`へ初回commitをpush。Apache-2.0、除外規則、秘密情報検査、README、貢献／セキュリティ文書、Issue／Pull Requestテンプレートを整備済み
 - Sub-phase 5.2b — Reproducible Build & CI（完了）: `VERSION`を単一のversion源とし、クリーンbuild directoryでのReleaseビルド、標準化したZIP名、SHA-256、公開前検査を実装。GitHub ActionsはmacOS 26 ARM64／Xcode 26.6でテスト・ビルド・成果物検証を行い、Git履歴を含む秘密情報検査を行う
-- Sub-phase 5.2c — Signed macOS Distribution: Developer ID署名、Hardened Runtime、公証、staple、DMGまたはZIP作成、別MacでのGatekeeper確認
+- Sub-phase 5.2c — Signed macOS Distribution（実装完了・実署名待ち）: Developer ID署名、Hardened Runtime、公証、staple、ZIP、Gatekeeper検証を自動化済み。Apple Developerの証明書・公証資格情報を設定し、生成物を別Macで確認すれば完了
 - Sub-phase 5.2d — GitHub Release: tag、変更履歴、署名・公証済み成果物、checksum、既知の制約をGitHub Releasesへ掲載
 - Sub-phase 5.2e — Public Launch Verification: 公開リポジトリからのclone、ビルド、インストール、初回会話、RAG、更新・ロールバック手順を第三者視点で確認
 

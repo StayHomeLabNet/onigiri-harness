@@ -9,6 +9,7 @@ configuration="${ONIGIRI_BUILD_CONFIGURATION:-debug}"
 version="${ONIGIRI_VERSION:-$(tr -d '[:space:]' < "$root_dir/VERSION")}"
 build_number="${ONIGIRI_BUILD_NUMBER:-1}"
 sign_identity="${ONIGIRI_SIGN_IDENTITY:--}"
+entitlements_path="${ONIGIRI_ENTITLEMENTS_PATH:-$root_dir/config/Onigiri.entitlements}"
 semver_pattern='^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'
 export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$build_dir/module-cache}"
 export SWIFTPM_MODULECACHE_OVERRIDE="${SWIFTPM_MODULECACHE_OVERRIDE:-$build_dir/module-cache}"
@@ -55,6 +56,20 @@ cat > "$app_dir/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 plutil -lint "$app_dir/Contents/Info.plist" >/dev/null
-codesign --force --sign "$sign_identity" "$app_dir"
-codesign --verify --deep --strict "$app_dir"
+if [[ ! -f "$entitlements_path" ]]; then
+  print -u2 "Entitlements file not found: $entitlements_path"
+  exit 2
+fi
+
+sign_args=(--force --sign "$sign_identity" --options runtime)
+if [[ "$sign_identity" != "-" ]]; then
+  sign_args+=(--timestamp)
+fi
+
+# Sign nested executables before sealing the outer app bundle. This ordering is
+# required for a verifiable Developer ID distribution signature.
+codesign "${sign_args[@]}" "$app_dir/Contents/MacOS/OnigiriServer"
+codesign "${sign_args[@]}" "$app_dir/Contents/MacOS/onigiri-mcp"
+codesign "${sign_args[@]}" --entitlements "$entitlements_path" "$app_dir"
+codesign --verify --deep --strict --verbose=2 "$app_dir"
 print "Built: $app_dir ($configuration, version $version, build $build_number)"

@@ -8,4 +8,5 @@
 *.sh text eol=lf
 *.py text eol=lf
 VERSION text eol=lf
+*.entitlements text eol=lf
 *.pdf binary

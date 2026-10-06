@@ -37,3 +37,9 @@ ONIGIRI_BUILD_CONFIGURATION=release zsh scripts/package-app.sh
 5. 未署名CI成果物を14日間保存する
 
 CI成果物は配布用ではありません。Developer ID署名、公証、stapleを行う成果物はSub-phase 5.2cで作成します。
+
+## 署名・公証済み配布物
+
+Developer ID証明書とApple公証資格情報を準備した環境では、`scripts/release-app.sh`がReleaseビルド、Hardened Runtime付き署名、公証、ticketのstaple、Gatekeeper検証、ZIPとSHA-256作成を一続きで実行します。GitHub Actionsの手動workflowでも同じ処理を実行できます。
+
+設定と実行方法は[署名・公証済みmacOS配布](SIGNED_DISTRIBUTION.md)を参照してください。

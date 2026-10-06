@@ -1,0 +1,101 @@
+name: Signed macOS Distribution
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signed-macos-distribution
+  cancel-in-progress: false
+
+jobs:
+  sign-notarize-package:
+    name: Sign, notarize, and package
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Validate required secrets
+        run: |
+          for name in \
+            MACOS_CERTIFICATE_P12_BASE64 \
+            MACOS_CERTIFICATE_PASSWORD \
+            APPLE_NOTARY_KEY_P8_BASE64 \
+            APPLE_NOTARY_KEY_ID \
+            APPLE_NOTARY_ISSUER_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required GitHub Actions secret is missing: $name" >&2
+              exit 1
+            fi
+          done
+      - name: Import Developer ID certificate
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/onigiri-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id-application.p12"
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -t cert \
+            -f pkcs12 \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
+            -k "$KEYCHAIN_PATH"
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1)"
+          if [[ -z "$SIGNING_IDENTITY" ]]; then
+            echo "The imported certificate does not contain a valid Developer ID Application identity." >&2
+            exit 1
+          fi
+          echo "ONIGIRI_SIGN_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "ONIGIRI_SIGNING_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+      - name: Prepare App Store Connect API key
+        run: |
+          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+          printf '%s' "$APPLE_NOTARY_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
+          chmod 600 "$NOTARY_KEY_PATH"
+          echo "ONIGIRI_NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
+      - name: Build, sign, notarize, staple, and package
+        env:
+          ONIGIRI_BUILD_DIR: ${{ runner.temp }}/onigiri-signed-build
+          ONIGIRI_BUILD_NUMBER: ${{ github.run_number }}
+          ONIGIRI_ARTIFACT_OUTPUT_DIR: ${{ runner.temp }}/onigiri-signed-artifacts
+          ONIGIRI_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          ONIGIRI_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: zsh scripts/release-app.sh
+      - name: Upload signed distribution
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Onigiri-Harness-signed-notarized
+          path: |
+            ${{ runner.temp }}/onigiri-signed-artifacts/*-notarized.zip
+            ${{ runner.temp }}/onigiri-signed-artifacts/*-notarized.zip.sha256
+            ${{ runner.temp }}/onigiri-signed-artifacts/*-notarized.notarization.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          if [[ -n "${ONIGIRI_SIGNING_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$ONIGIRI_SIGNING_KEYCHAIN" || true
+          fi

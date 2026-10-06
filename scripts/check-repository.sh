@@ -12,7 +12,7 @@ fail() {
 
 while IFS= read -r tracked_path; do
   case "$tracked_path" in
-    *.DS_Store|.env|.env.*|*.p12|*.mobileprovision|*.dmg|*.zip|Onigiri-*.json)
+    *.DS_Store|.env|.env.*|*.p12|*.cer|*.p8|*.keychain|*.keychain-db|*.mobileprovision|*.dmg|*.zip|Onigiri-*.json)
       [[ "$tracked_path" == ".env.example" ]] || fail "Disallowed tracked file: $tracked_path"
       ;;
   esac
@@ -24,7 +24,7 @@ if git grep -I -n -E '/Users/[^/]+/|OneDrive-個人用|Downloads/RAG' -- . \
 fi
 
 if git grep -I -n -E \
-  'sk-[A-Za-z0-9_-]{16,}|AIza[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY' \
+  'sk-[A-Za-z0-9_-]{16,}|AIza[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (RSA|OPENSSH|EC|DSA|PRIVATE) PRIVATE KEY|BEGIN PRIVATE KEY' \
   -- . ':(exclude)scripts/check-repository.sh'; then
   fail "Credential-like content found."
 fi
