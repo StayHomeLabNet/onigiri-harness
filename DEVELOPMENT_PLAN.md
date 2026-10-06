@@ -336,7 +336,7 @@ Release blocker解消後の最終受入です。Profileの保存と再起動復�
 
 作業区分:
 
-- Sub-phase 5.2a — Repository Readiness（進行中）: Git初期化、Privateリポジトリ`onigiri-harness`、Apache-2.0を決定。不要物・個人情報・秘密情報の除外、READMEと貢献／セキュリティ文書を整備済み。GitHub再認証、初回commit、remote作成を残す
+- Sub-phase 5.2a — Repository Readiness（完了）: `StayHomeLabNet/onigiri-harness`をPrivateで作成し、`main`へ初回commitをpush。Apache-2.0、除外規則、秘密情報検査、README、貢献／セキュリティ文書、Issue／Pull Requestテンプレートを整備済み
 - Sub-phase 5.2b — Reproducible Build & CI: クリーンcheckoutからのビルドとテスト、GitHub Actions、成果物名・version・checksumの標準化
 - Sub-phase 5.2c — Signed macOS Distribution: Developer ID署名、Hardened Runtime、公証、staple、DMGまたはZIP作成、別MacでのGatekeeper確認
 - Sub-phase 5.2d — GitHub Release: tag、変更履歴、署名・公証済み成果物、checksum、既知の制約をGitHub Releasesへ掲載

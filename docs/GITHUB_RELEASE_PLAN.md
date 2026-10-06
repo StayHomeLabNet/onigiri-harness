@@ -47,10 +47,11 @@ Onigiri HarnessをGitHubでソース公開し、GitHub ReleasesからmacOSアプ
 - Swift Packageと開発用アプリビルド: 完了
 - 自動テスト: 84件合格
 - ローカル署名検証: 合格
-- Gitリポジトリ初期化: 完了（`main`、remote未設定、初回commit前）
-- GitHub公開先: `StayHomeLabNet/onigiri-harness`のPrivateリポジトリに決定
+- Gitリポジトリ初期化: 完了（`main`、`origin`設定済み）
+- GitHub公開先: `StayHomeLabNet/onigiri-harness`のPrivateリポジトリを作成し、初回commitをpush済み
 - OSSライセンス: Apache-2.0に決定、公式LICENSEとNOTICEを配置済み
 - CONTRIBUTING・SECURITY・行動規範・Issue／Pull Requestテンプレート: 作成済み
 - 作業ツリーの秘密情報・個人ローカルパス検査: 合格
 - Developer ID署名・Apple公証: 未実施
 - GitHub Actions・GitHub Releases: 未実施
+- Private vulnerability reporting: Publicリポジトリだけで利用可能なため、公開へ切り替える直前に有効化する
