@@ -422,6 +422,27 @@ private struct CancellableTestSession: ModelConversationSession {
   #expect(recorder.sessionCount == 0)
 }
 
+@Test func currentDateAndLiveDataRequestsRespectCapabilityBoundaries() async throws {
+  let date = Date(timeIntervalSince1970: 1_791_763_200)
+  let japaneseDate = ContextBuilder.localCapabilityResponse(for: "今日は何年何月？", now: date)
+  #expect(japaneseDate?.contains("2026年10月") == true)
+
+  let englishDate = ContextBuilder.localCapabilityResponse(for: "What month is it?", now: date)
+  #expect(englishDate?.contains("October") == true)
+
+  let recorder = TestRecorder()
+  let harness = Harness(
+    provider: TestProvider(available: true, snapshots: ["fabricated"], recorder: recorder))
+  var response: [String] = []
+  try await harness.streamResponse(
+    to: "最新のレートをウェブ検索して", conversationID: UUID()
+  ) { response.append($0) }
+
+  #expect(response.count == 1)
+  #expect(response[0].contains("Web検索やライブの外部データ取得機能がありません"))
+  #expect(recorder.sessionCount == 0)
+}
+
 @Test func japaneseIMEConfirmationDoesNotSubmitChat() {
   #expect(
     ChatComposerInputPolicy.returnAction(hasMarkedText: true, shiftPressed: false)
@@ -1134,7 +1155,7 @@ private struct CancellableTestSession: ModelConversationSession {
     to: "Hello", conversationID: UUID(), runtime: runtime
   ) { _ in }
 
-  #expect(recorder.instructions == ["Always answer as a cooking assistant."])
+  #expect(recorder.instructions == [runtime.effectiveSystemInstructions])
   #expect(recorder.contextLimits == [8_500])
 }
 
@@ -1170,7 +1191,12 @@ private struct CancellableTestSession: ModelConversationSession {
   ) { _ in }
 
   #expect(recorder.sessionCount == 2)
-  #expect(recorder.instructions == ["Profile A", "Profile B"])
+  #expect(
+    recorder.instructions
+      == [
+        ChatRuntimeOptions(systemInstructions: "Profile A").effectiveSystemInstructions,
+        ChatRuntimeOptions(systemInstructions: "Profile B").effectiveSystemInstructions,
+      ])
 }
 
 @Test func evaluationReportSummarizesAndFiltersMarkdown() throws {

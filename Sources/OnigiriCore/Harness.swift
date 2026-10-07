@@ -70,6 +70,9 @@ public struct AgenticRAGTrace: Codable, Sendable, Equatable {
 public struct ChatRuntimeOptions: Codable, Sendable, Equatable {
   public static let defaultInstructions =
     "ユーザーの言語に合わせ、簡潔で親切に回答してください。会話の流れを踏まえて回答してください。"
+  public static let capabilityGuardrails = """
+    Capability boundaries: This chat has no web browser and no live external-data connection. Never claim that you searched the web, checked a website, or retrieved a current exchange rate, market price, weather, news, score, or other live information unless that information is explicitly included in the user's message or supplied reference material. Do not invent dates, rates, or other time-sensitive facts. When current external information is needed but unavailable, say so plainly in the user's language and ask for a source or value to analyze.
+    """
   public static let `default` = ChatRuntimeOptions()
 
   public let systemInstructions: String
@@ -88,6 +91,10 @@ public struct ChatRuntimeOptions: Codable, Sendable, Equatable {
     self.ragMode = ragMode
     self.searchSettings = searchSettings
     self.contextLimit = min(max(contextLimit, 2_000), 50_000)
+  }
+
+  public var effectiveSystemInstructions: String {
+    "\(systemInstructions)\n\n\(Self.capabilityGuardrails)"
   }
 }
 
@@ -199,11 +206,76 @@ public enum ContextBuilder {
   }
 
   public static func noKnowledgeResponse(for message: String) -> String {
-    let containsJapanese = message.range(
-      of: #"[\p{Hiragana}\p{Katakana}\p{Han}]"#, options: .regularExpression) != nil
-    return containsJapanese
+    return containsJapanese(message)
       ? "いいえ。現在、読み込まれているRAG資料はありません。"
       : "No. There are currently no RAG documents loaded."
+  }
+
+  public static func localCapabilityResponse(for message: String, now: Date = Date()) -> String? {
+    if isCurrentDateQuestion(message) {
+      return currentDateResponse(for: message, now: now)
+    }
+    if requiresLiveExternalData(message) {
+      return containsJapanese(message)
+        ? "このOnigiriの会話にはWeb検索やライブの外部データ取得機能がありません。最新の為替レートなどを検索・確認したとは言えません。確認したい日時と信頼できる情報源の値を共有していただければ、比較や計算をお手伝いできます。"
+        : "This Onigiri chat cannot browse the web or retrieve live external data. I can’t claim to have checked the latest exchange rate or similar information. Share a timestamped value from a reliable source and I can help compare or calculate it."
+    }
+    return nil
+  }
+
+  private static func isCurrentDateQuestion(_ message: String) -> Bool {
+    let value = normalized(message)
+    let japanesePatterns = [
+      "今日の日付", "今日の日にち", "今日は何日", "今日は何年", "今日は何月", "今日は何曜日",
+      "今日って何日", "今日って何月", "今日の年月日", "本日は何日",
+    ]
+    let englishPatterns = [
+      "what date is it", "what day is it", "what month is it", "what year is it",
+      "what is today's date", "today's date", "what's today's date",
+    ]
+    return japanesePatterns.contains { value.contains(normalized($0)) }
+      || englishPatterns.contains { value.contains($0) }
+  }
+
+  private static func requiresLiveExternalData(_ message: String) -> Bool {
+    let value = normalized(message)
+    let webSearch = [
+      "web検索", "ウェブ検索", "ネット検索", "インターネットで検索", "web search", "search the web",
+      "googleで検索", "google it",
+    ].contains { value.contains(normalized($0)) }
+    guard !webSearch else { return true }
+
+    let liveTopics = [
+      "ドル円", "為替", "exchange rate", "forex", "fx rate", "株価", "stock price", "bitcoin price",
+      "天気", "weather", "最新ニュース", "latest news", "ニュース速報", "breaking news", "試合結果",
+      "sports score",
+    ]
+    return liveTopics.contains { value.contains(normalized($0)) }
+  }
+
+  private static func currentDateResponse(for message: String, now: Date) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .current
+    let components = calendar.dateComponents([.year, .month, .day, .weekday], from: now)
+    guard let year = components.year, let month = components.month, let day = components.day else {
+      return containsJapanese(message) ? "現在の日付を取得できませんでした。" : "I couldn't determine the current date."
+    }
+    if containsJapanese(message) {
+      let weekdays = ["日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"]
+      let weekday = components.weekday.flatMap { weekdays.indices.contains($0 - 1) ? weekdays[$0 - 1] : nil }
+      return weekday.map { "今日は\(year)年\(month)月\(day)日（\($0)）です。" }
+        ?? "今日は\(year)年\(month)月\(day)日です。"
+    }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = calendar
+    formatter.timeZone = .current
+    formatter.dateFormat = "EEEE, MMMM d, yyyy"
+    return "Today is \(formatter.string(from: now))."
+  }
+
+  private static func containsJapanese(_ message: String) -> Bool {
+    message.range(of: #"[\p{Hiragana}\p{Katakana}\p{Han}]"#, options: .regularExpression) != nil
   }
 
   private static func previousAssistantAnswer(in history: [ChatHistoryMessage]) -> String? {
@@ -2270,7 +2342,7 @@ public actor Harness {
     let retrievalMilliseconds = Self.milliseconds(since: retrievalStart)
 
     let session = try await provider.makeSession(
-      instructions: ChatRuntimeOptions.default.systemInstructions,
+      instructions: ChatRuntimeOptions.default.effectiveSystemInstructions,
       contextLimit: ChatRuntimeOptions.default.contextLimit)
     let groundedMessage = ragManager.groundedMessage(
       for: question, selectedMatches: request.ragMode == .disabled ? nil : matches,
@@ -2377,6 +2449,11 @@ public actor Harness {
   ) async throws {
     let message = try Self.validatedMessage(input)
     guard generatingConversationID == nil else { throw HarnessError.busy }
+    if let response = ContextBuilder.localCapabilityResponse(for: message) {
+      try await onContext?(OpenAICompatibilityContext(matches: [], ragTrace: nil))
+      try await onSnapshot(response)
+      return
+    }
     let requestProvider = providerConfig.map(ModelProviderFactory.make(from:)) ?? provider
     let availability = await requestProvider.status()
     guard availability.available else { throw HarnessError.unavailable(availability.detail) }
@@ -2432,7 +2509,7 @@ public actor Harness {
       selectedChunksAreExplicit: selectedMatches != nil,
       searchSettings: runtime.searchSettings, maxCharacters: runtime.contextLimit)
     let session = try await requestProvider.makeSession(
-      instructions: runtime.systemInstructions, contextLimit: runtime.contextLimit)
+      instructions: runtime.effectiveSystemInstructions, contextLimit: runtime.contextLimit)
     let validCitationIndexes = Set(matches.map(\.citationIndex))
     var lastContent = ""
     let task = Task {
@@ -2461,6 +2538,10 @@ public actor Harness {
   ) async throws {
     let message = try Self.validatedMessage(input)
     guard generatingConversationID == nil else { throw HarnessError.busy }
+    if let response = ContextBuilder.localCapabilityResponse(for: message) {
+      try await onSnapshot(response)
+      return
+    }
     let availability = await status()
     guard availability.available else { throw HarnessError.unavailable(availability.detail) }
     if ragManager.status.documentCount == 0,
@@ -2484,7 +2565,7 @@ public actor Harness {
       // A selected answer starts with a fresh model context, so older retrieved
       // documents in the session cannot compete with the chosen chunks.
       let created = try await provider.makeSession(
-        instructions: runtime.systemInstructions, contextLimit: runtime.contextLimit)
+        instructions: runtime.effectiveSystemInstructions, contextLimit: runtime.contextLimit)
       sessions[conversationID] = created
       sessionRuntime[conversationID] = runtime
       session = created
