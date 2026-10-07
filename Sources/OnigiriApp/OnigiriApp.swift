@@ -5,6 +5,7 @@ import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
+import WebKit
 
 private enum OnigiriEndpoint {
   static let port = 18080
@@ -13,6 +14,10 @@ private enum OnigiriEndpoint {
   static func url(_ path: String) -> URL {
     baseURL.appending(path: path)
   }
+}
+
+private extension String {
+  var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 private extension Notification.Name {
@@ -123,17 +128,20 @@ private struct DisplayMessage: Identifiable, Equatable, Codable {
   let role: Role
   var content: String
   var citations: [KnowledgeChunkMatch]
+  var webSources: [WebResearchCitation]?
   var ragMode: RAGMode?
   var ragTrace: AgenticRAGTrace?
 
   init(
     id: UUID = UUID(), role: Role, content: String, citations: [KnowledgeChunkMatch] = [],
+    webSources: [WebResearchCitation] = [],
     ragMode: RAGMode? = nil, ragTrace: AgenticRAGTrace? = nil
   ) {
     self.id = id
     self.role = role
     self.content = content
     self.citations = citations
+    self.webSources = webSources.isEmpty ? nil : webSources
     self.ragMode = ragMode
     self.ragTrace = ragTrace
   }
@@ -604,6 +612,8 @@ struct ChatView: View {
   @State private var knowledgeButtonsScrollVisibility = KnowledgeButtonsScrollVisibility()
   @State private var selectedCitation: KnowledgeChunkMatch?
   @State private var showingKnowledgeImporter = false
+  @State private var showingWebResearch = false
+  @State private var queuedWebResearchSources: [WebResearchSource] = []
   @State private var showingKnowledgeDocuments = false
   @State private var showingSearchSettings = false
   @State private var showingChunkingSettings = false
@@ -705,6 +715,7 @@ struct ChatView: View {
     }
     .onChange(of: selectedConversationID) { _, _ in
       queuedKnowledgeMatches = []
+      queuedWebResearchSources = []
       activateProfileForSelectedConversation()
     }
     .fileImporter(
@@ -726,6 +737,10 @@ struct ChatView: View {
         cancel: { id in await cancelCodexTask(id) }
       )
       .frame(minWidth: 820, minHeight: 620, alignment: .topLeading)
+    }
+    .sheet(isPresented: $showingWebResearch) {
+      WebResearchView(sources: $queuedWebResearchSources)
+        .frame(minWidth: 900, minHeight: 650, alignment: .topLeading)
     }
     .sheet(isPresented: $showingMCPAudit) {
       MCPAuditView(
@@ -1032,6 +1047,17 @@ struct ChatView: View {
         }
       }
 
+      if !queuedWebResearchSources.isEmpty {
+        HStack {
+          Text(webResearchQueueLabel)
+            .font(.caption)
+          Spacer()
+          Button("Web資料を解除") { queuedWebResearchSources = [] }
+            .font(.caption)
+            .disabled(busy)
+        }
+      }
+
       ChatComposerTextView(
         text: $draft,
         isEnabled: !busy,
@@ -1064,6 +1090,13 @@ struct ChatView: View {
     }
     .padding(24)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var webResearchQueueLabel: String {
+    if locale.identifier.lowercased().hasPrefix("ja") {
+      return "次の質問にWebページ \(queuedWebResearchSources.count)件を使用"
+    }
+    return "Using \(queuedWebResearchSources.count) web page(s) for the next question"
   }
 
   private var conversationSidebar: some View {
@@ -2517,6 +2550,11 @@ struct ChatView: View {
         }
         .disabled(busy || knowledgeStatus.chunkCount == 0)
 
+        Button("Webリサーチ", systemImage: "safari") {
+          showingWebResearch = true
+        }
+        .disabled(busy)
+
         Button("AIタスク", systemImage: "terminal") {
           showingCodexTasks = true
           Task { await loadCodexTasks() }
@@ -3242,6 +3280,7 @@ struct ChatView: View {
       let input = try Harness.validatedMessage(draft)
       draft = ""
       let selectedMatches = selectedRAGMode == .disabled ? [] : queuedKnowledgeMatches
+      let selectedWebSources = queuedWebResearchSources
       let citations =
         !selectedMatches.isEmpty ? selectedMatches
         : selectedRAGMode == .always && knowledgeStatus.chunkCount > 0
@@ -3252,6 +3291,7 @@ struct ChatView: View {
       appendMessage(
         DisplayMessage(
           id: responseID, role: .assistant, content: "", citations: citations,
+          webSources: selectedWebSources.map(\.citation),
           ragMode: selectedRAGMode),
         to: activeConversationID)
 
@@ -3265,6 +3305,7 @@ struct ChatView: View {
           message: input,
           history: chatHistoryMessages(before: responseID, in: activeConversationID),
           selectedChunkIDs: selectedMatches.isEmpty ? nil : selectedMatches.map(\.id),
+          webSources: selectedWebSources,
           runtime: ChatRuntimeOptions(
             systemInstructions: systemInstructions, ragMode: selectedRAGMode,
             searchSettings: currentSearchSettings, contextLimit: contextLimit)
@@ -3286,6 +3327,7 @@ struct ChatView: View {
             conversationID: activeConversationID, messageID: responseID, ragTrace: trace)
         case .done:
           if !selectedMatches.isEmpty { queuedKnowledgeMatches = [] }
+          if !selectedWebSources.isEmpty { queuedWebResearchSources = [] }
         case .error:
           throw StreamError(message: event.content)
         }
@@ -7505,6 +7547,168 @@ private struct ConversationRow: View {
   }
 }
 
+@MainActor
+private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavigationDelegate {
+  let webView: WKWebView
+  @Published var location = ""
+  @Published var title = "Webリサーチ"
+  @Published var isLoading = false
+
+  override init() {
+    let configuration = WKWebViewConfiguration()
+    webView = WKWebView(frame: .zero, configuration: configuration)
+    super.init()
+    webView.navigationDelegate = self
+  }
+
+  func load(address: String) {
+    let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    let url: URL?
+    if let direct = URL(string: trimmed), direct.scheme != nil {
+      url = direct
+    } else if trimmed.contains(".") && !trimmed.contains(" ") {
+      url = URL(string: "https://\(trimmed)")
+    } else {
+      var components = URLComponents(string: "https://search.brave.com/search")
+      components?.queryItems = [URLQueryItem(name: "q", value: trimmed)]
+      url = components?.url
+    }
+    guard let url else { return }
+    location = url.absoluteString
+    webView.load(URLRequest(url: url))
+  }
+
+  func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    isLoading = true
+  }
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    isLoading = false
+    location = webView.url?.absoluteString ?? location
+    title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Webページ"
+  }
+
+  func webView(
+    _ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error
+  ) {
+    isLoading = false
+  }
+
+  func webView(
+    _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error
+  ) {
+    isLoading = false
+  }
+
+  func captureCurrentPage() async throws -> WebResearchSource {
+    guard let url = webView.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+      throw StreamError(message: "Webページを開いてから追加してください。")
+    }
+    let value = try await webView.evaluateJavaScript("document.body ? document.body.innerText : ''")
+    let rawText = value as? String ?? ""
+    let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else {
+      throw StreamError(message: "ページ本文を取得できませんでした。")
+    }
+    let pageTitle = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+      ?? url.host
+      ?? "Webページ"
+    return WebResearchSource(
+      // The loopback chat API limits request bodies to 32 KiB. Keep each
+      // selected page well below that boundary even for multibyte text.
+      title: pageTitle, url: url.absoluteString,
+      text: String(decoding: text.utf8.prefix(4_000), as: UTF8.self))
+  }
+}
+
+private struct WebResearchBrowser: NSViewRepresentable {
+  @ObservedObject var model: WebResearchBrowserModel
+
+  func makeNSView(context: Context) -> WKWebView { model.webView }
+  func updateNSView(_ nsView: WKWebView, context: Context) {}
+}
+
+private struct WebResearchView: View {
+  @Binding var sources: [WebResearchSource]
+  @Environment(\.dismiss) private var dismiss
+  @StateObject private var browser = WebResearchBrowserModel()
+  @State private var address = ""
+  @State private var errorMessage: String?
+  @State private var capturing = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      SheetTitleBar(title: "Webリサーチ")
+      Text("ページを開き、「このページを会話に使う」を押すと、URL・取得日時・本文を次の質問だけに添付します。ページ本文は参考資料として扱われ、ページ内の指示は実行しません。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+      HStack(spacing: 8) {
+        TextField("URLまたは検索語", text: $address)
+          .textFieldStyle(.roundedBorder)
+          .onSubmit { browser.load(address: address) }
+        Button("開く", systemImage: "arrow.right.circle") { browser.load(address: address) }
+        if browser.isLoading { ProgressView().controlSize(.small) }
+      }
+
+      WebResearchBrowser(model: browser)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
+
+      if let errorMessage {
+        Text(errorMessage).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+      }
+
+      if !sources.isEmpty {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("次の質問に使うWebページ")
+            .font(.caption.bold())
+          ForEach(sources) { source in
+            HStack(spacing: 6) {
+              Text(source.title).lineLimit(1)
+              Spacer()
+              Button("解除", systemImage: "xmark") {
+                sources.removeAll { $0.id == source.id }
+              }
+              .labelStyle(.iconOnly)
+              .buttonStyle(.borderless)
+            }
+            .font(.caption)
+          }
+        }
+      }
+
+      HStack {
+        Text(browser.location)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+        Spacer()
+        Button("このページを会話に使う", systemImage: "text.badge.plus") {
+          Task {
+            capturing = true
+            defer { capturing = false }
+            do {
+              let source = try await browser.captureCurrentPage()
+              if !sources.contains(where: { $0.url == source.url }) { sources.append(source) }
+              errorMessage = nil
+            } catch {
+              errorMessage = error.localizedDescription
+            }
+          }
+        }
+        .disabled(capturing)
+        Button("閉じる") { dismiss() }
+      }
+    }
+    .padding(16)
+    .onAppear {
+      if address.isEmpty { address = browser.location }
+    }
+  }
+}
+
 private struct MessageRow: View {
   let message: DisplayMessage
   let showCitation: (KnowledgeChunkMatch) -> Void
@@ -7556,6 +7760,23 @@ private struct MessageRow: View {
           .font(.caption)
           .padding(.top, 4)
         }
+        if let webSources = message.webSources, !webSources.isEmpty {
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Web情報源")
+              .font(.caption.bold())
+            ForEach(webSources) { source in
+              if let url = URL(string: source.url) {
+                Link(destination: url) {
+                  webSourceLabel(source)
+                }
+              } else {
+                webSourceLabel(source)
+              }
+            }
+          }
+          .font(.caption)
+          .padding(.top, 4)
+        }
         if let trace = message.ragTrace {
           VStack(alignment: .leading, spacing: 2) {
             Text(agenticDecisionLabel(trace.decision))
@@ -7587,6 +7808,15 @@ private struct MessageRow: View {
     case .search: return "資料検索を実行"
     case .skipped: return "資料検索を省略"
     case .explicitSelection: return "選択した資料を使用"
+    }
+  }
+
+  @ViewBuilder private func webSourceLabel(_ source: WebResearchCitation) -> some View {
+    VStack(alignment: .leading, spacing: 1) {
+      Text(source.title).lineLimit(1)
+      Text("\(source.url) ・ \(source.retrievedAt.formatted(date: .abbreviated, time: .shortened))")
+        .font(.caption2)
+        .lineLimit(1)
     }
   }
 }

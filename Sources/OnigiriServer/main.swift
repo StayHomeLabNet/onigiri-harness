@@ -697,6 +697,7 @@ final class HTTPConnection: @unchecked Sendable {
       try await harness.streamResponse(
         to: request.message, conversationID: request.conversationID, history: request.history,
         selectedChunkIDs: request.selectedChunkIDs, runtime: request.runtime ?? .default,
+        webSources: request.webSources ?? [],
         onRAGTrace: { trace in
           let data = try JSONEncoder().encode(trace)
           guard let content = String(data: data, encoding: .utf8) else {

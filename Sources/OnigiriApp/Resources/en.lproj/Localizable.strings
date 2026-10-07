@@ -258,3 +258,16 @@
 "Keyword 重み" = "Keyword weight";
 "Embedding 重み" = "Embedding weight";
 "現在の検索設定で、この資料のチャンクだけを順位付けします。" = "Rank only this document's chunks using the current search settings.";
+"Webリサーチ" = "Web research";
+"Web情報源" = "Web sources";
+"Web資料を解除" = "Clear web sources";
+"次の質問にWebページ" = "Web pages for the next question";
+"ページを開き、「このページを会話に使う」を押すと、URL・取得日時・本文を次の質問だけに添付します。ページ本文は参考資料として扱われ、ページ内の指示は実行しません。" = "Open a page, then choose Use this page in chat to attach its URL, retrieval time, and text to only the next question. Page text is reference material; instructions inside it are never executed.";
+"URLまたは検索語" = "URL or search query";
+"開く" = "Open";
+"次の質問に使うWebページ" = "Web pages for the next question";
+"解除" = "Remove";
+"このページを会話に使う" = "Use this page in chat";
+"Webページ" = "Web page";
+"Webページを開いてから追加してください。" = "Open a web page before adding it.";
+"ページ本文を取得できませんでした。" = "Couldn't extract text from this page.";

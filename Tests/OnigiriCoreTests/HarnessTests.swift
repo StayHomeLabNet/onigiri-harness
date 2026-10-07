@@ -443,6 +443,34 @@ private struct CancellableTestSession: ModelConversationSession {
   #expect(recorder.sessionCount == 0)
 }
 
+@Test func selectedWebResearchIsUsedWithoutClaimingAnUnperformedSearch() async throws {
+  let recorder = TestRecorder()
+  let harness = Harness(
+    provider: TestProvider(available: true, snapshots: ["根拠付きの回答"], recorder: recorder))
+  let source = WebResearchSource(
+    title: "Example exchange rates", url: "https://example.com/rates",
+    retrievedAt: Date(timeIntervalSince1970: 1_791_763_200),
+    text: "USD/JPY reference rate: 150.25."
+  )
+  let conversationID = UUID()
+  var response: [String] = []
+  try await harness.streamResponse(
+    to: "今日のドル円レートは？", conversationID: conversationID, webSources: [source]
+  ) { response.append($0) }
+
+  #expect(response == ["根拠付きの回答"])
+  #expect(recorder.sessionCount == 1)
+  #expect(recorder.messages.last?.contains("[Web 1] Example exchange rates") == true)
+  #expect(recorder.messages.last?.contains("USD/JPY reference rate: 150.25.") == true)
+  #expect(recorder.instructions.last?.contains("Never claim that you searched the web") == true)
+
+  // Web material is for this answer only. The next turn receives a fresh
+  // provider session and no hidden copy of the selected page.
+  try await harness.streamResponse(to: "続けて", conversationID: conversationID) { _ in }
+  #expect(recorder.sessionCount == 2)
+  #expect(recorder.messages.last?.contains("USD/JPY reference rate: 150.25.") == false)
+}
+
 @Test func japaneseIMEConfirmationDoesNotSubmitChat() {
   #expect(
     ChatComposerInputPolicy.returnAction(hasMarkedText: true, shiftPressed: false)
