@@ -19,13 +19,58 @@ private extension Notification.Name {
   static let ensureOnigiriServer = Notification.Name("OnigiriHarness.ensureServer")
 }
 
+private enum AppLanguage: String, CaseIterable, Identifiable {
+  case japanese = "ja"
+  case english = "en"
+
+  var id: String { rawValue }
+  var locale: Locale { Locale(identifier: rawValue) }
+  var displayName: String {
+    switch self {
+    case .japanese: return "日本語"
+    case .english: return "English"
+    }
+  }
+}
+
 @main
 struct OnigiriApp: App {
   @NSApplicationDelegateAdaptor(BundledServerLauncher.self) private var serverLauncher
+  @AppStorage("onigiri.uiLanguage") private var languageCode = AppLanguage.japanese.rawValue
+
+  private var language: AppLanguage { AppLanguage(rawValue: languageCode) ?? .japanese }
 
   var body: some Scene {
-    WindowGroup("Onigiri Harness") { ChatView() }
+    WindowGroup("Onigiri Harness") {
+      ChatView()
+        .environment(\.locale, language.locale)
+    }
       .defaultSize(width: 980, height: 640)
+
+    Settings {
+      LanguageSettingsView()
+        .environment(\.locale, language.locale)
+    }
+  }
+}
+
+private struct LanguageSettingsView: View {
+  @AppStorage("onigiri.uiLanguage") private var languageCode = AppLanguage.japanese.rawValue
+
+  var body: some View {
+    Form {
+      Picker("表示言語", selection: $languageCode) {
+        ForEach(AppLanguage.allCases) { language in
+          Text(language.displayName).tag(language.rawValue)
+        }
+      }
+      Text("言語の変更はすべてのOnigiriウインドウへすぐに反映されます。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    .formStyle(.grouped)
+    .frame(width: 420)
+    .padding(12)
   }
 }
 
@@ -100,10 +145,88 @@ private struct StoredConversation: Identifiable, Equatable, Codable {
   var updatedAt: Date
   var messages: [DisplayMessage]
   var profileID: UUID?
+  var contextResetAfterMessageID: UUID?
 
   static var empty: StoredConversation {
     StoredConversation(
-      id: UUID(), title: "新しい会話", updatedAt: Date(), messages: [], profileID: nil)
+      id: UUID(), title: "新しい会話", updatedAt: Date(), messages: [], profileID: nil,
+      contextResetAfterMessageID: nil)
+  }
+}
+
+private struct ChatComposerTextView: NSViewRepresentable {
+  @Binding var text: String
+  let isEnabled: Bool
+  let canSubmit: Bool
+  let onSubmit: () -> Void
+
+  func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+  func makeNSView(context: Context) -> NSScrollView {
+    let scrollView = NSScrollView()
+    scrollView.hasVerticalScroller = true
+    scrollView.autohidesScrollers = true
+    scrollView.drawsBackground = false
+    scrollView.borderType = .noBorder
+
+    let textView = IMEAwareTextView()
+    textView.delegate = context.coordinator
+    textView.isRichText = false
+    textView.allowsUndo = true
+    textView.isAutomaticQuoteSubstitutionEnabled = false
+    textView.font = .preferredFont(forTextStyle: .body)
+    textView.textContainerInset = NSSize(width: 6, height: 7)
+    textView.string = text
+    textView.onPlainReturn = { [weak coordinator = context.coordinator] in
+      coordinator?.submitIfPossible()
+    }
+    scrollView.documentView = textView
+    return scrollView
+  }
+
+  func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    context.coordinator.parent = self
+    guard let textView = scrollView.documentView as? IMEAwareTextView else { return }
+    textView.isEditable = isEnabled
+    textView.isSelectable = true
+    if !textView.hasMarkedText(), textView.string != text {
+      textView.string = text
+    }
+  }
+
+  final class Coordinator: NSObject, NSTextViewDelegate {
+    var parent: ChatComposerTextView
+
+    init(parent: ChatComposerTextView) { self.parent = parent }
+
+    func textDidChange(_ notification: Notification) {
+      guard let textView = notification.object as? NSTextView else { return }
+      parent.text = textView.string
+    }
+
+    func submitIfPossible() {
+      guard parent.isEnabled, parent.canSubmit else { return }
+      parent.onSubmit()
+    }
+  }
+}
+
+private final class IMEAwareTextView: NSTextView {
+  var onPlainReturn: (() -> Void)?
+
+  override func keyDown(with event: NSEvent) {
+    let isReturn = event.keyCode == 36 || event.keyCode == 76
+    guard isReturn else {
+      super.keyDown(with: event)
+      return
+    }
+    let action = ChatComposerInputPolicy.returnAction(
+      hasMarkedText: hasMarkedText(), shiftPressed: event.modifierFlags.contains(.shift))
+    if action != .submit {
+      super.keyDown(with: event)
+      return
+    }
+    onPlainReturn?()
   }
 }
 
@@ -444,6 +567,7 @@ private func copyToPasteboard(_ text: String) {
 }
 
 struct ChatView: View {
+  @Environment(\.locale) private var locale
   @State private var conversations: [StoredConversation] = [.empty]
   @State private var selectedConversationID: UUID?
   @State private var draft = "こんにちは"
@@ -908,21 +1032,16 @@ struct ChatView: View {
         }
       }
 
-      TextEditor(text: $draft)
-        .font(.body)
+      ChatComposerTextView(
+        text: $draft,
+        isEnabled: !busy,
+        canSubmit: available && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        onSubmit: { Task { await send() } }
+      )
         .frame(height: 78)
         .padding(8)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-        .disabled(busy)
         .accessibilityLabel("メッセージ")
-        .onKeyPress(.return, phases: .down) { keyPress in
-          if keyPress.modifiers.contains(.shift) { return .ignored }
-          guard !busy, available,
-            !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-          else { return .handled }
-          Task { await send() }
-          return .handled
-        }
 
       HStack {
         Text("会話の文脈は「新しい会話」を押すまで保持されます。")
@@ -1023,7 +1142,7 @@ struct ChatView: View {
         }
         Button("管理") { showingProductProfiles = true }
           .disabled(busy)
-        Text(selectedRAGMode.displayName)
+        Text(LocalizedStringKey(selectedRAGMode.displayName))
           .font(.caption)
           .foregroundStyle(.secondary)
         Spacer(minLength: 8)
@@ -2379,10 +2498,7 @@ struct ChatView: View {
   private var knowledgeSettings: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 10) {
-        Label(
-          "資料 \(knowledgeStatus.documentCount)件 / \(knowledgeStatus.chunkCount)チャンク / 埋め込み \(knowledgeStatus.embeddedChunkCount)",
-          systemImage: "doc.text.magnifyingglass"
-        )
+        Label(knowledgeStatusLabel, systemImage: "doc.text.magnifyingglass")
         .font(.caption)
         .foregroundStyle(.secondary)
         .lineLimit(1)
@@ -2519,6 +2635,13 @@ struct ChatView: View {
     }
   }
 
+  private var knowledgeStatusLabel: String {
+    if locale.identifier.lowercased().hasPrefix("en") {
+      return "\(knowledgeStatus.documentCount) documents / \(knowledgeStatus.chunkCount) chunks / \(knowledgeStatus.embeddedChunkCount) embedded"
+    }
+    return "資料 \(knowledgeStatus.documentCount)件 / \(knowledgeStatus.chunkCount)チャンク / 埋め込み \(knowledgeStatus.embeddedChunkCount)"
+  }
+
   private func knowledgeButtonsScrollCue(
     edge: HorizontalEdge, visible: Bool, action: @escaping () -> Void
   ) -> some View {
@@ -2542,7 +2665,10 @@ struct ChatView: View {
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .accessibilityLabel(edge == .leading ? "左の隠れたボタンを表示" : "右の隠れたボタンを表示")
+          .accessibilityLabel(
+            Text(
+              LocalizedStringKey(
+                edge == .leading ? "左の隠れたボタンを表示" : "右の隠れたボタンを表示")))
           .frame(maxWidth: .infinity, alignment: edge == .leading ? .leading : .trailing)
         }
         .transition(.opacity)
@@ -2984,6 +3110,7 @@ struct ChatView: View {
       pruneRAGEvaluationSuites()
       await loadKnowledgeDocuments()
       if knowledgeDocuments.isEmpty { showingKnowledgeDocuments = false }
+      if knowledgeStatus.documentCount == 0 { resetConversationContextsAfterKnowledgeClear() }
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
@@ -3091,7 +3218,7 @@ struct ChatView: View {
       saveRAGEvaluationCases()
       pruneRAGEvaluationSuites()
       selectedCitation = nil
-      clearSelectedConversationCitations()
+      resetConversationContextsAfterKnowledgeClear()
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
@@ -3197,13 +3324,32 @@ struct ChatView: View {
     guard let conversation = conversations.first(where: { $0.id == conversationID }) else {
       return []
     }
-    return conversation.messages.compactMap { message in
+    let messages: ArraySlice<DisplayMessage>
+    if let resetID = conversation.contextResetAfterMessageID,
+      let resetIndex = conversation.messages.firstIndex(where: { $0.id == resetID })
+    {
+      messages = conversation.messages.suffix(from: conversation.messages.index(after: resetIndex))
+    } else {
+      messages = conversation.messages[...]
+    }
+    return messages.compactMap { message in
       guard message.id != responseID else { return nil }
       let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !content.isEmpty else { return nil }
       let role: ChatHistoryMessage.Role = message.role == .user ? .user : .assistant
       return ChatHistoryMessage(role: role, content: content)
     }
+  }
+
+  @MainActor private func resetConversationContextsAfterKnowledgeClear() {
+    for index in conversations.indices {
+      conversations[index].contextResetAfterMessageID = conversations[index].messages.last?.id
+      for messageIndex in conversations[index].messages.indices {
+        conversations[index].messages[messageIndex].citations = []
+        conversations[index].messages[messageIndex].ragTrace = nil
+      }
+    }
+    saveConversations()
   }
 
   @MainActor private func newConversation() async {
@@ -7331,6 +7477,7 @@ private struct FlowLayout: Layout {
 }
 
 private struct ConversationRow: View {
+  @Environment(\.locale) private var locale
   let conversation: StoredConversation
 
   var body: some View {
@@ -7339,7 +7486,7 @@ private struct ConversationRow: View {
         .font(.headline)
         .lineLimit(2)
       HStack {
-        Text("\(conversation.messages.count)件")
+        Text(messageCountLabel)
         Spacer()
         Text(conversation.updatedAt, style: .date)
       }
@@ -7347,6 +7494,14 @@ private struct ConversationRow: View {
       .foregroundStyle(.secondary)
     }
     .padding(.vertical, 4)
+  }
+
+  private var messageCountLabel: String {
+    if locale.identifier.lowercased().hasPrefix("en") {
+      let count = conversation.messages.count
+      return "\(count) \(count == 1 ? "message" : "messages")"
+    }
+    return "\(conversation.messages.count)件"
   }
 }
 
@@ -7362,7 +7517,7 @@ private struct MessageRow: View {
           Text(message.role == .user ? "あなた" : "Onigiri")
             .font(.caption.bold()).foregroundStyle(.secondary)
           if let ragMode = message.ragMode {
-            Text(ragMode.displayName)
+            Text(LocalizedStringKey(ragMode.displayName))
               .font(.caption2)
               .padding(.horizontal, 6)
               .padding(.vertical, 2)

@@ -185,6 +185,27 @@ public enum ContextBuilder {
     return message.count <= 80 && patterns.contains { normalizedMessage.contains(normalized($0)) }
   }
 
+  public static func isKnowledgeAvailabilityQuestion(_ message: String) -> Bool {
+    let normalizedMessage = normalized(message)
+    let japaneseQuestion = normalizedMessage.contains("資料")
+      && ["持って", "ありますか", "ある?", "ある？", "読み込まれて", "登録されて"]
+        .contains { normalizedMessage.contains(normalized($0)) }
+    let englishSubject = ["document", "source", "knowledge base"]
+      .contains { normalizedMessage.contains($0) }
+    let englishQuestion = englishSubject
+      && ["do you have", "are there", "is there", "any", "loaded"]
+        .contains { normalizedMessage.contains($0) }
+    return japaneseQuestion || englishQuestion
+  }
+
+  public static func noKnowledgeResponse(for message: String) -> String {
+    let containsJapanese = message.range(
+      of: #"[\p{Hiragana}\p{Katakana}\p{Han}]"#, options: .regularExpression) != nil
+    return containsJapanese
+      ? "いいえ。現在、読み込まれているRAG資料はありません。"
+      : "No. There are currently no RAG documents loaded."
+  }
+
   private static func previousAssistantAnswer(in history: [ChatHistoryMessage]) -> String? {
     history.reversed().first {
       $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -210,6 +231,22 @@ public enum ContextBuilder {
   private static func suffix(_ text: String, limit: Int) -> String {
     guard limit > 0 else { return "" }
     return String(text.suffix(limit))
+  }
+}
+
+public enum ChatComposerReturnAction: Sendable, Equatable {
+  case submit
+  case insertNewline
+  case commitComposition
+}
+
+public enum ChatComposerInputPolicy {
+  public static func returnAction(
+    hasMarkedText: Bool, shiftPressed: Bool
+  ) -> ChatComposerReturnAction {
+    if hasMarkedText { return .commitComposition }
+    if shiftPressed { return .insertNewline }
+    return .submit
   }
 }
 
@@ -2343,6 +2380,13 @@ public actor Harness {
     let requestProvider = providerConfig.map(ModelProviderFactory.make(from:)) ?? provider
     let availability = await requestProvider.status()
     guard availability.available else { throw HarnessError.unavailable(availability.detail) }
+    if ragManager.status.documentCount == 0,
+      ContextBuilder.isKnowledgeAvailabilityQuestion(message)
+    {
+      try await onContext?(OpenAICompatibilityContext(matches: [], ragTrace: nil))
+      try await onSnapshot(ContextBuilder.noKnowledgeResponse(for: message))
+      return
+    }
     let requestedSelectedMatches = try runtime.ragMode == .disabled
       ? nil : selectedChunkIDs.map { try ragManager.selectedMatches(ids: $0) }
     let isFollowUpTransform = ContextBuilder.isFollowUpTransformRequest(message)
@@ -2419,6 +2463,12 @@ public actor Harness {
     guard generatingConversationID == nil else { throw HarnessError.busy }
     let availability = await status()
     guard availability.available else { throw HarnessError.unavailable(availability.detail) }
+    if ragManager.status.documentCount == 0,
+      ContextBuilder.isKnowledgeAvailabilityQuestion(message)
+    {
+      try await onSnapshot(ContextBuilder.noKnowledgeResponse(for: message))
+      return
+    }
     let requestedSelectedMatches = try runtime.ragMode == .disabled
       ? nil : selectedChunkIDs.map { try ragManager.selectedMatches(ids: $0) }
     let isFollowUpTransform = ContextBuilder.isFollowUpTransformRequest(message)

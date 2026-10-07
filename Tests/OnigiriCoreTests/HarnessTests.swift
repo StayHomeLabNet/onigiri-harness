@@ -398,6 +398,41 @@ private struct CancellableTestSession: ModelConversationSession {
   #expect(recorder.messages.last == "銀色のおにぎり")
 }
 
+@Test func noKnowledgeAvailabilityQuestionReturnsDeterministicAnswerAfterClear() async throws {
+  let recorder = TestRecorder()
+  let harness = Harness(
+    provider: TestProvider(available: true, snapshots: ["誤ったモデル回答"], recorder: recorder))
+  _ = try await harness.addKnowledgeDocument(
+    KnowledgeDocumentRequest(title: "temporary.md", content: "一時資料です。"))
+  _ = try await harness.clearKnowledge()
+
+  var japanese: [String] = []
+  try await harness.streamResponse(
+    to: "資料を持ってる？", conversationID: UUID(),
+    history: [.init(role: .assistant, content: "はい。資料があります。")]
+  ) { japanese.append($0) }
+  #expect(japanese == ["いいえ。現在、読み込まれているRAG資料はありません。"])
+  #expect(recorder.sessionCount == 0)
+
+  var english: [String] = []
+  try await harness.streamResponse(to: "Do you have any documents loaded?", conversationID: UUID()) {
+    english.append($0)
+  }
+  #expect(english == ["No. There are currently no RAG documents loaded."])
+  #expect(recorder.sessionCount == 0)
+}
+
+@Test func japaneseIMEConfirmationDoesNotSubmitChat() {
+  #expect(
+    ChatComposerInputPolicy.returnAction(hasMarkedText: true, shiftPressed: false)
+      == .commitComposition)
+  #expect(
+    ChatComposerInputPolicy.returnAction(hasMarkedText: false, shiftPressed: true)
+      == .insertNewline)
+  #expect(
+    ChatComposerInputPolicy.returnAction(hasMarkedText: false, shiftPressed: false) == .submit)
+}
+
 @Test func knowledgeChunkingSettingsRebuildExistingDocuments() async throws {
   let harness = Harness(provider: TestProvider(available: true, snapshots: []))
   let content = String(repeating: "未来から逆算して今日の行動を決めます。", count: 120)

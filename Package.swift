@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "OnigiriHarness",
+    defaultLocalization: "ja",
     platforms: [.macOS(.v26)],
     products: [
         .library(name: "OnigiriCore", targets: ["OnigiriCore"]),
@@ -14,7 +15,10 @@ let package = Package(
     targets: [
         .target(name: "OnigiriCore"),
         .executableTarget(name: "OnigiriServer", dependencies: ["OnigiriCore"]),
-        .executableTarget(name: "OnigiriApp", dependencies: ["OnigiriCore"]),
+        .executableTarget(
+            name: "OnigiriApp", dependencies: ["OnigiriCore"],
+            resources: [.process("Resources")]
+        ),
         .executableTarget(name: "OnigiriEvalCLI", dependencies: ["OnigiriCore"]),
         .executableTarget(name: "OnigiriMCP", dependencies: ["OnigiriCore"]),
         .testTarget(name: "OnigiriCoreTests", dependencies: ["OnigiriCore"])

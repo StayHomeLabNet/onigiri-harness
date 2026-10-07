@@ -342,6 +342,8 @@ GitHubでApache-2.0のソースコードを公開し、第三者がclone、テ�
 - Sub-phase 5.2d — GitHub Source Publication（完了）: 公開前検査とCIに合格後、`StayHomeLabNet/onigiri-harness`をPublicへ変更。Private vulnerability reporting、README・ライセンス・貢献導線、認証なしのfresh cloneを確認済み。GitHub Releaseを作る場合は当面ソースアーカイブだけを扱う
 - Sub-phase 5.2e — Public Launch Verification: 公開リポジトリからのclone、ビルド、インストール、初回会話、RAG、更新・ロールバック手順を第三者視点で確認
 
+Sub-phase 5.2eの公開前UI確認では、資料全消去後の会話コンテキストを分離し、資料0件時の所持確認へ決定的に回答する処理を追加しました。日本語IMEの変換確定Enterと送信Enterを分離し、Shift+Enter改行も維持しています。メニューバーの設定画面から日本語／英語を即時切替できるローカライズ基盤と、配布アプリへの言語リソース同梱も追加しました。
+
 完了条件:
 
 - 初回設定から最初の会話・資料検索まで案内される

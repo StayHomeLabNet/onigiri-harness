@@ -41,6 +41,9 @@ cp "$bin_dir/OnigiriServer" "$app_dir/Contents/MacOS/OnigiriServer"
 cp "$bin_dir/onigiri-mcp" "$app_dir/Contents/MacOS/onigiri-mcp"
 cp "$root_dir/LICENSE" "$app_dir/Contents/Resources/LICENSE"
 cp "$root_dir/NOTICE" "$app_dir/Contents/Resources/NOTICE"
+for localization_dir in "$root_dir"/Sources/OnigiriApp/Resources/*.lproj; do
+  cp -R "$localization_dir" "$app_dir/Contents/Resources/"
+done
 cat > "$app_dir/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -51,6 +54,8 @@ cat > "$app_dir/Contents/Info.plist" <<PLIST
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$version</string>
 <key>CFBundleVersion</key><string>$build_number</string>
+<key>CFBundleDevelopmentRegion</key><string>ja</string>
+<key>CFBundleLocalizations</key><array><string>ja</string><string>en</string></array>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
