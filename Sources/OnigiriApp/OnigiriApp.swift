@@ -7652,6 +7652,8 @@ private struct WebResearchView: View {
   @State private var searchResults: [WebSearchResult] = []
   @State private var tavilyAPIKey = ""
   @State private var tavilyKeychainMessage: String?
+  @State private var searXNGDiagnostic: WebResearchDiagnostic?
+  @State private var tavilyDiagnostic: WebResearchDiagnostic?
   private let secretStore = KeychainSecretStore()
 
   var body: some View {
@@ -7672,11 +7674,18 @@ private struct WebResearchView: View {
       DisclosureGroup("SearXNGローカル連携") {
         Toggle("SearXNGを検索に使う", isOn: $searXNGEnabled)
           .onChange(of: searXNGEnabled) { _, enabled in if enabled { tavilyEnabled = false } }
-        TextField("SearXNG URL", text: $searXNGBaseURL)
-          .textFieldStyle(.roundedBorder)
+        HStack(spacing: 6) {
+          TextField("SearXNG URL", text: $searXNGBaseURL)
+            .textFieldStyle(.roundedBorder)
+          Button("接続確認", systemImage: "checkmark.arrow.trianglehead.2.clockwise") {
+            Task { await checkSearXNGConnection() }
+          }
+          .disabled(searching)
+        }
         Text("このMacで起動したSearXNGのloopback URLだけを使います。例: http://127.0.0.1:8080")
           .font(.caption)
           .foregroundStyle(.secondary)
+        providerDiagnosticView(searXNGDiagnostic)
       }
       .font(.caption)
 
@@ -7697,6 +7706,10 @@ private struct WebResearchView: View {
           Button("Keychainから削除", systemImage: "trash") { deleteTavilyAPIKey() }
             .labelStyle(.iconOnly)
             .help("保存済みのTavily API keyをKeychainから削除")
+          Button("接続確認", systemImage: "checkmark.arrow.trianglehead.2.clockwise") {
+            Task { await checkTavilyConnection() }
+          }
+          .disabled(searching)
         }
         Text("Tavilyへは検索語だけを送ります。検索結果を会話に使うには、ページを開いて明示的に追加してください。")
           .font(.caption)
@@ -7704,6 +7717,7 @@ private struct WebResearchView: View {
         if let tavilyKeychainMessage {
           Text(tavilyKeychainMessage).font(.caption).foregroundStyle(.secondary)
         }
+        providerDiagnosticView(tavilyDiagnostic)
       }
       .font(.caption)
 
@@ -7857,6 +7871,66 @@ private struct WebResearchView: View {
     } catch {
       errorMessage = error.localizedDescription
       searchResults = []
+    }
+  }
+
+  @ViewBuilder private func providerDiagnosticView(_ diagnostic: WebResearchDiagnostic?) -> some View {
+    if let diagnostic {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(diagnostic.summary)
+          .foregroundStyle(diagnostic.isSuccess ? .green : .red)
+        Text(diagnostic.detail).foregroundStyle(.secondary)
+      }
+      .font(.caption)
+      .textSelection(.enabled)
+    }
+  }
+
+  private func checkSearXNGConnection() async {
+    searching = true
+    defer { searching = false }
+    let provider: WebResearchProvider = .searXNG
+    do {
+      let url = try SearXNGConfiguration(baseURL: searXNGBaseURL).searchURL(for: "Onigiri Harness")
+      let startedAt = Date()
+      let (data, response) = try await URLSession.shared.data(from: url)
+      guard let http = response as? HTTPURLResponse else { throw SearXNGError.invalidResponse }
+      guard (200..<300).contains(http.statusCode) else {
+        searXNGDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider, statusCode: http.statusCode)
+        return
+      }
+      let decoded = try JSONDecoder().decode(SearXNGSearchResponse.self, from: data)
+      let elapsed = Int(Date().timeIntervalSince(startedAt) * 1_000)
+      searXNGDiagnostic = WebResearchDiagnosticAdvisor.success(
+        provider: provider, resultCount: decoded.results.count, elapsedMilliseconds: elapsed)
+    } catch is URLError {
+      searXNGDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider, isNetworkError: true)
+    } catch {
+      searXNGDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider)
+    }
+  }
+
+  private func checkTavilyConnection() async {
+    searching = true
+    defer { searching = false }
+    let provider: WebResearchProvider = .tavily
+    do {
+      let request = try TavilySearchAPI.makeRequest(query: "Onigiri Harness", apiKey: tavilyAPIKey)
+      let startedAt = Date()
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse else { throw TavilyError.invalidResponse }
+      guard (200..<300).contains(http.statusCode) else {
+        tavilyDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider, statusCode: http.statusCode)
+        return
+      }
+      let decoded = try JSONDecoder().decode(TavilySearchResponse.self, from: data)
+      let elapsed = Int(Date().timeIntervalSince(startedAt) * 1_000)
+      tavilyDiagnostic = WebResearchDiagnosticAdvisor.success(
+        provider: provider, resultCount: decoded.results.count, elapsedMilliseconds: elapsed)
+    } catch is URLError {
+      tavilyDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider, isNetworkError: true)
+    } catch {
+      tavilyDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider)
     }
   }
 

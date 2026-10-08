@@ -88,6 +88,8 @@ search:
 
 Tavilyを使う場合は、「Webリサーチ」内の「Tavily連携」を有効にしてAPI keyをmacOS Keychainへ保存します。Tavilyには検索語のみを送信し、検索結果は会話へ自動追加しません。結果ページを開いて「このページを会話に使う」を選んだ場合だけ、URL、取得時刻、ページ本文の抜粋が次の質問へ渡ります。Tavilyの無料プランでも利用できますが、毎月のAPIクレジット上限があります。
 
+SearXNGとTavilyの設定欄には「接続確認」があります。SearXNGはJSON検索の結果数と応答時間を確認し、JSONが無効なHTTP 403では`search.formats`へ`json`を追加する手順を表示します。Tavilyの接続確認は1 APIクレジットを使用し、API key不正、リクエスト頻度、月間利用上限をHTTPステータス別に案内します。
+
 OneDrive の拡張属性によるコード署名エラーを避けるため、生成物は `/tmp/onigiri-harness-build` に置きます。再起動や一時ファイル削除後は再ビルドしてください。
 
 配布候補のRelease構成アプリ、ZIP、SHA-256 checksumを作る場合は次を実行します。Developer ID署名前の成果物なので、ファイル名には`unsigned`が付きます。
