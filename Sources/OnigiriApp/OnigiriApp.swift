@@ -7632,10 +7632,14 @@ private struct WebResearchBrowser: NSViewRepresentable {
 private struct WebResearchView: View {
   @Binding var sources: [WebResearchSource]
   @Environment(\.dismiss) private var dismiss
+  @AppStorage("onigiri.searxng.enabled") private var searXNGEnabled = false
+  @AppStorage("onigiri.searxng.baseURL") private var searXNGBaseURL = "http://127.0.0.1:8080"
   @StateObject private var browser = WebResearchBrowserModel()
   @State private var address = ""
   @State private var errorMessage: String?
   @State private var capturing = false
+  @State private var searching = false
+  @State private var searchResults: [SearXNGSearchResult] = []
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -7647,9 +7651,49 @@ private struct WebResearchView: View {
       HStack(spacing: 8) {
         TextField("URLまたは検索語", text: $address)
           .textFieldStyle(.roundedBorder)
-          .onSubmit { browser.load(address: address) }
-        Button("開く", systemImage: "arrow.right.circle") { browser.load(address: address) }
-        if browser.isLoading { ProgressView().controlSize(.small) }
+          .onSubmit { openAddress() }
+        Button("開く", systemImage: "arrow.right.circle") { openAddress() }
+        if browser.isLoading || searching { ProgressView().controlSize(.small) }
+      }
+
+      DisclosureGroup("SearXNGローカル連携") {
+        Toggle("SearXNGを検索に使う", isOn: $searXNGEnabled)
+        TextField("SearXNG URL", text: $searXNGBaseURL)
+          .textFieldStyle(.roundedBorder)
+        Text("このMacで起動したSearXNGのloopback URLだけを使います。例: http://127.0.0.1:8080")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      .font(.caption)
+
+      if !searchResults.isEmpty {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("SearXNG検索結果")
+            .font(.caption.bold())
+          ScrollView {
+            LazyVStack(alignment: .leading, spacing: 4) {
+              ForEach(searchResults) { result in
+                Button {
+                  address = result.url
+                  browser.load(address: result.url)
+                  searchResults = []
+                } label: {
+                  VStack(alignment: .leading, spacing: 2) {
+                    Text(result.title).font(.caption.bold()).lineLimit(1)
+                    Text(result.url).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    if let content = result.content, !content.isEmpty {
+                      Text(content).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                  }
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                Divider()
+              }
+            }
+          }
+          .frame(maxHeight: 170)
+        }
       }
 
       WebResearchBrowser(model: browser)
@@ -7705,6 +7749,44 @@ private struct WebResearchView: View {
     .padding(16)
     .onAppear {
       if address.isEmpty { address = browser.location }
+    }
+  }
+
+  private func openAddress() {
+    let query = address.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else { return }
+    guard searXNGEnabled, isSearchQuery(query) else {
+      searchResults = []
+      browser.load(address: query)
+      return
+    }
+    Task { await searchSearXNG(query) }
+  }
+
+  private func isSearchQuery(_ value: String) -> Bool {
+    !value.contains("://") && !(value.contains(".") && !value.contains(" "))
+  }
+
+  private func searchSearXNG(_ query: String) async {
+    searching = true
+    defer { searching = false }
+    do {
+      let configuration = SearXNGConfiguration(baseURL: searXNGBaseURL)
+      let url = try configuration.searchURL(for: query)
+      let (data, response) = try await URLSession.shared.data(from: url)
+      guard let http = response as? HTTPURLResponse else { throw SearXNGError.invalidResponse }
+      guard (200..<300).contains(http.statusCode) else {
+        throw SearXNGError.server(statusCode: http.statusCode)
+      }
+      let decoded = try JSONDecoder().decode(SearXNGSearchResponse.self, from: data)
+      searchResults = decoded.results.filter {
+        guard let url = URL(string: $0.url) else { return false }
+        return ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+      }.prefix(8).map { $0 }
+      errorMessage = searchResults.isEmpty ? "SearXNG検索結果がありません。" : nil
+    } catch {
+      errorMessage = error.localizedDescription
+      searchResults = []
     }
   }
 }

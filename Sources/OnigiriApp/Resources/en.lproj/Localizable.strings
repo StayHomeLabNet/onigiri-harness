@@ -271,3 +271,9 @@
 "Webページ" = "Web page";
 "Webページを開いてから追加してください。" = "Open a web page before adding it.";
 "ページ本文を取得できませんでした。" = "Couldn't extract text from this page.";
+"SearXNGローカル連携" = "Local SearXNG integration";
+"SearXNGを検索に使う" = "Use SearXNG for searches";
+"SearXNG URL" = "SearXNG URL";
+"このMacで起動したSearXNGのloopback URLだけを使います。例: http://127.0.0.1:8080" = "Only a loopback URL for SearXNG running on this Mac is used. Example: http://127.0.0.1:8080";
+"SearXNG検索結果" = "SearXNG results";
+"SearXNG検索結果がありません。" = "No SearXNG results were found.";
