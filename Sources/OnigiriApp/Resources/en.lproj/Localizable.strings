@@ -283,7 +283,7 @@
 "Tavily API keyをKeychainへ保存" = "Save Tavily API key to Keychain";
 "Tavily API keyをKeychainから読み込む" = "Load Tavily API key from Keychain";
 "保存済みのTavily API keyをKeychainから削除" = "Delete the saved Tavily API key from Keychain";
-"Tavilyへは検索語だけを送ります。検索結果を会話に使うには、ページを開いて明示的に追加してください。" = "Only the search query is sent to Tavily. Open a result and explicitly add its page before it can be used in chat.";
+"Web検索・最新情報の依頼では、検索語をTavilyへ自動送信します。上位結果はその回答だけの情報源として表示されます。" = "For Web-search and current-information requests, the query is automatically sent to Tavily. Top results are shown as sources for that answer only.";
 "Tavily検索結果" = "Tavily results";
 "Tavily検索結果がありません。" = "No Tavily results were found.";
 "Keychainに保存済みのTavily API keyはありません。" = "No Tavily API key is saved in Keychain.";

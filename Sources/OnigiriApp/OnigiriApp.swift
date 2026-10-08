@@ -645,6 +645,8 @@ struct ChatView: View {
   @AppStorage("onigiri.chunkMaxCharacters") private var chunkMaxCharacters = 1_200
   @AppStorage("onigiri.chunkOverlapCharacters") private var chunkOverlapCharacters = 260
   @AppStorage("onigiri.ragEvaluationSuiteID") private var selectedRAGEvaluationSuiteID = ""
+  @AppStorage("onigiri.tavily.enabled") private var tavilyWebResearchEnabled = false
+  private let webResearchSecretStore = KeychainSecretStore()
 
   private var selectedConversation: StoredConversation? {
     guard let selectedConversationID else { return nil }
@@ -3280,7 +3282,16 @@ struct ChatView: View {
       let input = try Harness.validatedMessage(draft)
       draft = ""
       let selectedMatches = selectedRAGMode == .disabled ? [] : queuedKnowledgeMatches
-      let selectedWebSources = queuedWebResearchSources
+      var selectedWebSources = queuedWebResearchSources
+      if selectedWebSources.isEmpty,
+        tavilyWebResearchEnabled,
+        !ContextBuilder.isFollowUpTransformRequest(input),
+        WebResearchIntent.requiresLiveWebInformation(input)
+      {
+        let automaticResearch = await automaticTavilyResearch(for: input)
+        selectedWebSources = automaticResearch.sources
+        if let notice = automaticResearch.notice { errorMessage = notice }
+      }
       let citations =
         !selectedMatches.isEmpty ? selectedMatches
         : selectedRAGMode == .always && knowledgeStatus.chunkCount > 0
@@ -3335,6 +3346,47 @@ struct ChatView: View {
     } catch {
       removeTrailingEmptyAssistantMessage(from: activeConversationID)
       if !stopRequested { errorMessage = error.localizedDescription }
+    }
+  }
+
+  @MainActor private func automaticTavilyResearch(
+    for query: String
+  ) async -> (sources: [WebResearchSource], notice: String?) {
+    let apiKey: String
+    do {
+      apiKey = try webResearchSecretStore.read(account: "web-research.tavily") ?? ""
+    } catch {
+      return ([], "Tavilyの自動検索を使えません: \(error.localizedDescription)")
+    }
+
+    do {
+      let request = try TavilySearchAPI.makeRequest(query: query, apiKey: apiKey, maxResults: 3)
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse else {
+        return ([], "Tavilyの自動検索から有効な応答を受け取れませんでした。")
+      }
+      guard (200..<300).contains(http.statusCode) else {
+        let diagnostic = WebResearchDiagnosticAdvisor.failure(provider: .tavily, statusCode: http.statusCode)
+        return ([], "\(diagnostic.summary) \(diagnostic.detail)")
+      }
+      let decoded = try JSONDecoder().decode(TavilySearchResponse.self, from: data)
+      let sources = decoded.results.compactMap { result -> WebResearchSource? in
+        guard let url = URL(string: result.url),
+          ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+          let content = result.content?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty
+        else { return nil }
+        return WebResearchSource(
+          title: result.title, url: result.url,
+          text: String(decoding: content.utf8.prefix(4_000), as: UTF8.self))
+      }
+      guard !sources.isEmpty else {
+        return ([], "Tavilyの自動検索では、会話に使える本文付きの結果が見つかりませんでした。")
+      }
+      return (sources, nil)
+    } catch is URLError {
+      return ([], "Tavilyの自動検索へ接続できませんでした。ネットワーク接続を確認してください。")
+    } catch {
+      return ([], "Tavilyの自動検索に失敗しました: \(error.localizedDescription)")
     }
   }
 
@@ -7711,7 +7763,7 @@ private struct WebResearchView: View {
           }
           .disabled(searching)
         }
-        Text("Tavilyへは検索語だけを送ります。検索結果を会話に使うには、ページを開いて明示的に追加してください。")
+        Text("Web検索・最新情報の依頼では、検索語をTavilyへ自動送信します。上位結果はその回答だけの情報源として表示されます。")
           .font(.caption)
           .foregroundStyle(.secondary)
         if let tavilyKeychainMessage {

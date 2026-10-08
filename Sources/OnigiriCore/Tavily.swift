@@ -79,14 +79,17 @@ public struct TavilySearchResult: Codable, Sendable, Equatable, Identifiable {
 public enum TavilySearchAPI {
   public static let endpoint = URL(string: "https://api.tavily.com/search")!
 
-  public static func makeRequest(query: String, apiKey: String) throws -> URLRequest {
+  public static func makeRequest(
+    query: String, apiKey: String, maxResults: Int = 8
+  ) throws -> URLRequest {
     let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !key.isEmpty else { throw TavilyError.missingAPIKey }
     var request = URLRequest(url: endpoint)
     request.httpMethod = "POST"
     request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.httpBody = try JSONEncoder().encode(TavilySearchRequest(query: query))
+    request.httpBody = try JSONEncoder().encode(
+      TavilySearchRequest(query: query, maxResults: maxResults))
     return request
   }
 }
