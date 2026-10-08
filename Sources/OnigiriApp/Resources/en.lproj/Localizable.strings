@@ -277,3 +277,17 @@
 "このMacで起動したSearXNGのloopback URLだけを使います。例: http://127.0.0.1:8080" = "Only a loopback URL for SearXNG running on this Mac is used. Example: http://127.0.0.1:8080";
 "SearXNG検索結果" = "SearXNG results";
 "SearXNG検索結果がありません。" = "No SearXNG results were found.";
+"Tavily連携" = "Tavily integration";
+"Tavilyを検索に使う" = "Use Tavily for searches";
+"Tavily API key（Keychain）" = "Tavily API key (Keychain)";
+"Tavily API keyをKeychainへ保存" = "Save Tavily API key to Keychain";
+"Tavily API keyをKeychainから読み込む" = "Load Tavily API key from Keychain";
+"保存済みのTavily API keyをKeychainから削除" = "Delete the saved Tavily API key from Keychain";
+"Tavilyへは検索語だけを送ります。検索結果を会話に使うには、ページを開いて明示的に追加してください。" = "Only the search query is sent to Tavily. Open a result and explicitly add its page before it can be used in chat.";
+"Tavily検索結果" = "Tavily results";
+"Tavily検索結果がありません。" = "No Tavily results were found.";
+"Keychainに保存済みのTavily API keyはありません。" = "No Tavily API key is saved in Keychain.";
+"Tavily API keyをKeychainから読み込みました。" = "Loaded the Tavily API key from Keychain.";
+"保存するTavily API keyを入力してください。" = "Enter a Tavily API key to save.";
+"Tavily API keyをKeychainへ保存しました。" = "Saved the Tavily API key to Keychain.";
+"Tavily API keyをKeychainから削除しました。" = "Deleted the Tavily API key from Keychain.";

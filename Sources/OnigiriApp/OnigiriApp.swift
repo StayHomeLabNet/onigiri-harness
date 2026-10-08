@@ -7629,17 +7629,30 @@ private struct WebResearchBrowser: NSViewRepresentable {
   func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
 
+private struct WebSearchResult: Identifiable {
+  let title: String
+  let url: String
+  let content: String?
+  let provider: String
+
+  var id: String { "\(provider):\(url)" }
+}
+
 private struct WebResearchView: View {
   @Binding var sources: [WebResearchSource]
   @Environment(\.dismiss) private var dismiss
   @AppStorage("onigiri.searxng.enabled") private var searXNGEnabled = false
   @AppStorage("onigiri.searxng.baseURL") private var searXNGBaseURL = "http://127.0.0.1:8080"
+  @AppStorage("onigiri.tavily.enabled") private var tavilyEnabled = false
   @StateObject private var browser = WebResearchBrowserModel()
   @State private var address = ""
   @State private var errorMessage: String?
   @State private var capturing = false
   @State private var searching = false
-  @State private var searchResults: [SearXNGSearchResult] = []
+  @State private var searchResults: [WebSearchResult] = []
+  @State private var tavilyAPIKey = ""
+  @State private var tavilyKeychainMessage: String?
+  private let secretStore = KeychainSecretStore()
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -7658,6 +7671,7 @@ private struct WebResearchView: View {
 
       DisclosureGroup("SearXNGローカル連携") {
         Toggle("SearXNGを検索に使う", isOn: $searXNGEnabled)
+          .onChange(of: searXNGEnabled) { _, enabled in if enabled { tavilyEnabled = false } }
         TextField("SearXNG URL", text: $searXNGBaseURL)
           .textFieldStyle(.roundedBorder)
         Text("このMacで起動したSearXNGのloopback URLだけを使います。例: http://127.0.0.1:8080")
@@ -7666,9 +7680,36 @@ private struct WebResearchView: View {
       }
       .font(.caption)
 
+      DisclosureGroup("Tavily連携") {
+        Toggle("Tavilyを検索に使う", isOn: $tavilyEnabled)
+          .onChange(of: tavilyEnabled) { _, enabled in if enabled { searXNGEnabled = false } }
+        HStack(spacing: 6) {
+          SecureField("Tavily API key（Keychain）", text: $tavilyAPIKey)
+            .textFieldStyle(.roundedBorder)
+          Button("Keychainへ保存", systemImage: "key.fill") { saveTavilyAPIKey() }
+            .labelStyle(.iconOnly)
+            .help("Tavily API keyをKeychainへ保存")
+          Button("Keychainから読み込む", systemImage: "arrow.down.to.line") {
+            loadTavilyAPIKey()
+          }
+          .labelStyle(.iconOnly)
+          .help("Tavily API keyをKeychainから読み込む")
+          Button("Keychainから削除", systemImage: "trash") { deleteTavilyAPIKey() }
+            .labelStyle(.iconOnly)
+            .help("保存済みのTavily API keyをKeychainから削除")
+        }
+        Text("Tavilyへは検索語だけを送ります。検索結果を会話に使うには、ページを開いて明示的に追加してください。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        if let tavilyKeychainMessage {
+          Text(tavilyKeychainMessage).font(.caption).foregroundStyle(.secondary)
+        }
+      }
+      .font(.caption)
+
       if !searchResults.isEmpty {
         VStack(alignment: .leading, spacing: 4) {
-          Text("SearXNG検索結果")
+          Text(searchResults.first?.provider == "Tavily" ? "Tavily検索結果" : "SearXNG検索結果")
             .font(.caption.bold())
           ScrollView {
             LazyVStack(alignment: .leading, spacing: 4) {
@@ -7749,18 +7790,25 @@ private struct WebResearchView: View {
     .padding(16)
     .onAppear {
       if address.isEmpty { address = browser.location }
+      loadTavilyAPIKey()
     }
   }
 
   private func openAddress() {
     let query = address.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else { return }
-    guard searXNGEnabled, isSearchQuery(query) else {
+    guard (searXNGEnabled || tavilyEnabled), isSearchQuery(query) else {
       searchResults = []
       browser.load(address: query)
       return
     }
-    Task { await searchSearXNG(query) }
+    Task {
+      if tavilyEnabled {
+        await searchTavily(query)
+      } else {
+        await searchSearXNG(query)
+      }
+    }
   }
 
   private func isSearchQuery(_ value: String) -> Bool {
@@ -7782,11 +7830,66 @@ private struct WebResearchView: View {
       searchResults = decoded.results.filter {
         guard let url = URL(string: $0.url) else { return false }
         return ["http", "https"].contains(url.scheme?.lowercased() ?? "")
-      }.prefix(8).map { $0 }
+      }.prefix(8).map { WebSearchResult(title: $0.title, url: $0.url, content: $0.content, provider: "SearXNG") }
       errorMessage = searchResults.isEmpty ? "SearXNG検索結果がありません。" : nil
     } catch {
       errorMessage = error.localizedDescription
       searchResults = []
+    }
+  }
+
+  private func searchTavily(_ query: String) async {
+    searching = true
+    defer { searching = false }
+    do {
+      let request = try TavilySearchAPI.makeRequest(query: query, apiKey: tavilyAPIKey)
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse else { throw TavilyError.invalidResponse }
+      guard (200..<300).contains(http.statusCode) else {
+        throw TavilyError.server(statusCode: http.statusCode)
+      }
+      let decoded = try JSONDecoder().decode(TavilySearchResponse.self, from: data)
+      searchResults = decoded.results.filter {
+        guard let url = URL(string: $0.url) else { return false }
+        return ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+      }.prefix(8).map { WebSearchResult(title: $0.title, url: $0.url, content: $0.content, provider: "Tavily") }
+      errorMessage = searchResults.isEmpty ? "Tavily検索結果がありません。" : nil
+    } catch {
+      errorMessage = error.localizedDescription
+      searchResults = []
+    }
+  }
+
+  private func loadTavilyAPIKey() {
+    do {
+      tavilyAPIKey = try secretStore.read(account: "web-research.tavily") ?? ""
+      tavilyKeychainMessage = tavilyAPIKey.isEmpty ? "Keychainに保存済みのTavily API keyはありません。" : "Tavily API keyをKeychainから読み込みました。"
+    } catch {
+      tavilyKeychainMessage = error.localizedDescription
+    }
+  }
+
+  private func saveTavilyAPIKey() {
+    let key = tavilyAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !key.isEmpty else {
+      tavilyKeychainMessage = "保存するTavily API keyを入力してください。"
+      return
+    }
+    do {
+      try secretStore.save(key, account: "web-research.tavily")
+      tavilyKeychainMessage = "Tavily API keyをKeychainへ保存しました。"
+    } catch {
+      tavilyKeychainMessage = error.localizedDescription
+    }
+  }
+
+  private func deleteTavilyAPIKey() {
+    do {
+      try secretStore.delete(account: "web-research.tavily")
+      tavilyAPIKey = ""
+      tavilyKeychainMessage = "Tavily API keyをKeychainから削除しました。"
+    } catch {
+      tavilyKeychainMessage = error.localizedDescription
     }
   }
 }
