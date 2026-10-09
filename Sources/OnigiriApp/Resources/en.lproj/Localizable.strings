@@ -51,6 +51,16 @@
 "閲覧履歴を保存" = "Save browsing history";
 "ホーム画面に最近の履歴を表示" = "Show recent history on the home page";
 "ブックマークと履歴はWebリサーチのブラウザから管理できます。" = "Bookmarks and browsing history can be managed from the Web Research browser.";
+"ホーム画面にブックマークを表示" = "Show bookmarks on the home page";
+"リンクを外部ブラウザで開く" = "Open links in the external browser";
+"この設定をオンにすると、ページ内で選んだ外部リンクを既定のブラウザで開きます。" = "When enabled, links selected inside a page open in your default browser.";
+"プライバシー" = "Privacy";
+"保存した履歴を消去" = "Clear saved history";
+"保存したブックマークを消去" = "Clear saved bookmarks";
+"CookieとWebサイトデータを消去" = "Clear cookies and website data";
+"保存した閲覧履歴を消去しました。" = "Saved browsing history was cleared.";
+"保存したブックマークを消去しました。" = "Saved bookmarks were cleared.";
+"CookieとWebサイトデータを消去しました。" = "Cookies and website data were cleared.";
 "閉じる" = "Close";
 "開く" = "Open";
 "適用" = "Apply";

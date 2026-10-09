@@ -95,11 +95,15 @@ private struct WebResearchSettingsView: View {
   @AppStorage("onigiri.searxng.baseURL") private var searXNGBaseURL = "http://127.0.0.1:8080"
   @AppStorage("onigiri.webResearch.saveHistory") private var savesBrowserHistory = true
   @AppStorage("onigiri.webResearch.homeShowsHistory") private var homeShowsHistory = true
+  @AppStorage("onigiri.webResearch.homeShowsBookmarks") private var homeShowsBookmarks = true
+  @AppStorage("onigiri.webResearch.opensExternalLinksExternally") private var opensExternalLinksExternally = false
   @State private var tavilyAPIKey = ""
   @State private var tavilyKeychainMessage: String?
   @State private var searXNGDiagnostic: WebResearchDiagnostic?
   @State private var tavilyDiagnostic: WebResearchDiagnostic?
   @State private var checking = false
+  @State private var clearingWebsiteData = false
+  @State private var browserDataMessage: String?
   private let secretStore = KeychainSecretStore()
 
   var body: some View {
@@ -146,10 +150,30 @@ private struct WebResearchSettingsView: View {
 
       Section("ブラウザ") {
         Toggle("閲覧履歴を保存", isOn: $savesBrowserHistory)
+        Toggle("ホーム画面にブックマークを表示", isOn: $homeShowsBookmarks)
         Toggle("ホーム画面に最近の履歴を表示", isOn: $homeShowsHistory)
-        Text("ブックマークと履歴はWebリサーチのブラウザから管理できます。")
+        Toggle("リンクを外部ブラウザで開く", isOn: $opensExternalLinksExternally)
+        Text("この設定をオンにすると、ページ内で選んだ外部リンクを既定のブラウザで開きます。")
           .font(.caption)
           .foregroundStyle(.secondary)
+      }
+
+      Section("プライバシー") {
+        Button("保存した履歴を消去", systemImage: "clock.arrow.circlepath") {
+          WebResearchBrowserModel.clearPersistedHistory()
+          browserDataMessage = "保存した閲覧履歴を消去しました。"
+        }
+        Button("保存したブックマークを消去", systemImage: "bookmark.slash") {
+          WebResearchBrowserModel.clearPersistedBookmarks()
+          browserDataMessage = "保存したブックマークを消去しました。"
+        }
+        Button("CookieとWebサイトデータを消去", systemImage: "eraser") {
+          Task { await clearWebsiteData() }
+        }
+        .disabled(clearingWebsiteData)
+        if let browserDataMessage {
+          Text(browserDataMessage).font(.caption).foregroundStyle(.secondary)
+        }
       }
     }
     .formStyle(.grouped)
@@ -239,6 +263,19 @@ private struct WebResearchSettingsView: View {
       tavilyAPIKey = ""
       tavilyKeychainMessage = "Tavily API keyをKeychainから削除しました。"
     } catch { tavilyKeychainMessage = error.localizedDescription }
+  }
+
+  private func clearWebsiteData() async {
+    clearingWebsiteData = true
+    defer { clearingWebsiteData = false }
+    await withCheckedContinuation { continuation in
+      WKWebsiteDataStore.default().removeData(
+        ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast
+      ) {
+        continuation.resume()
+      }
+    }
+    browserDataMessage = "CookieとWebサイトデータを消去しました。"
   }
 }
 
@@ -7786,6 +7823,7 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
   private static let bookmarksDefaultsKey = "onigiri.webResearch.browserBookmarks"
   private static let historyDefaultsKey = "onigiri.webResearch.browserHistory"
   private static let savesHistoryDefaultsKey = "onigiri.webResearch.saveHistory"
+  private static let opensExternalLinksDefaultsKey = "onigiri.webResearch.opensExternalLinksExternally"
   private static let maximumHistoryEntries = 100
 
   let webView: WKWebView
@@ -7857,6 +7895,14 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
     save(history, key: Self.historyDefaultsKey)
   }
 
+  static func clearPersistedHistory() {
+    UserDefaults.standard.removeObject(forKey: historyDefaultsKey)
+  }
+
+  static func clearPersistedBookmarks() {
+    UserDefaults.standard.removeObject(forKey: bookmarksDefaultsKey)
+  }
+
   func load(address: String) {
     let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
@@ -7900,6 +7946,22 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
   ) {
     isLoading = false
     updateNavigationState()
+  }
+
+  func webView(
+    _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+    decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+  ) {
+    let opensExternally = UserDefaults.standard.bool(forKey: Self.opensExternalLinksDefaultsKey)
+    guard opensExternally, navigationAction.navigationType == .linkActivated,
+      let url = navigationAction.request.url,
+      ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+    else {
+      decisionHandler(.allow)
+      return
+    }
+    NSWorkspace.shared.open(url)
+    decisionHandler(.cancel)
   }
 
   func captureCurrentPage() async throws -> WebResearchSource {
@@ -7977,6 +8039,7 @@ private struct WebResearchView: View {
   @AppStorage("onigiri.searxng.baseURL") private var searXNGBaseURL = "http://127.0.0.1:8080"
   @AppStorage("onigiri.tavily.enabled") private var tavilyEnabled = false
   @AppStorage("onigiri.webResearch.homeShowsHistory") private var homeShowsHistory = true
+  @AppStorage("onigiri.webResearch.homeShowsBookmarks") private var homeShowsBookmarks = true
   @StateObject private var browser = WebResearchBrowserModel()
   @State private var address = ""
   @State private var errorMessage: String?
@@ -8168,7 +8231,7 @@ private struct WebResearchView: View {
         }
         Text("URLまたは検索語を入力して、Webページを開けます。")
           .font(.caption).foregroundStyle(.secondary)
-        if !browser.bookmarks.isEmpty {
+        if homeShowsBookmarks && !browser.bookmarks.isEmpty {
           Text("ブックマーク").font(.caption.bold())
           ForEach(browser.bookmarks.prefix(5)) { bookmark in
             browserHomeLink(title: bookmark.title, url: bookmark.url) {
