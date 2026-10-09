@@ -1,5 +1,36 @@
 import Foundation
 
+/// Optional constraints shared by the manual SearXNG and Tavily searches.
+public struct WebSearchRefinement: Codable, Sendable, Equatable {
+  public let maxResults: Int
+  public let language: String?
+  public let timeRange: String?
+  public let includedDomains: [String]
+
+  public init(
+    maxResults: Int = 8, language: String? = nil, timeRange: String? = nil,
+    includedDomains: [String] = []
+  ) {
+    self.maxResults = max(1, min(maxResults, 20))
+    self.language = language?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    self.timeRange = ["day", "week", "month", "year"].contains(timeRange ?? "") ? timeRange : nil
+    self.includedDomains = includedDomains.compactMap { domain in
+      let normalized = domain.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !normalized.isEmpty else { return nil }
+      if let url = URL(string: normalized), let host = url.host {
+        return host
+      }
+      return normalized
+        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        .nilIfEmpty
+    }
+  }
+}
+
+private extension String {
+  var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
 /// Configuration for an opt-in, self-hosted SearXNG instance.
 /// The app intentionally accepts loopback URLs only: this setting is for a
 /// search service the user runs on the same Mac, not a public proxy.
@@ -10,7 +41,7 @@ public struct SearXNGConfiguration: Codable, Sendable, Equatable {
     self.baseURL = baseURL
   }
 
-  public func searchURL(for query: String) throws -> URL {
+  public func searchURL(for query: String, refinement: WebSearchRefinement = WebSearchRefinement()) throws -> URL {
     let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
     guard var components = URLComponents(string: trimmed),
       let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
@@ -25,12 +56,16 @@ public struct SearXNGConfiguration: Codable, Sendable, Equatable {
     guard var request = URLComponents(url: endpoint, resolvingAgainstBaseURL: false) else {
       throw SearXNGError.invalidLocalURL
     }
-    request.queryItems = [
+    var queryItems = [
       URLQueryItem(name: "q", value: query),
       URLQueryItem(name: "format", value: "json"),
-      URLQueryItem(name: "language", value: "auto"),
+      URLQueryItem(name: "language", value: refinement.language ?? "auto"),
       URLQueryItem(name: "safesearch", value: "1"),
     ]
+    if let timeRange = refinement.timeRange {
+      queryItems.append(URLQueryItem(name: "time_range", value: timeRange))
+    }
+    request.queryItems = queryItems
     guard let url = request.url else { throw SearXNGError.invalidLocalURL }
     return url
   }

@@ -21,6 +21,16 @@ import Testing
   }
 }
 
+@Test func searXNGIncludesLanguageAndTimeRefinements() throws {
+  let configuration = SearXNGConfiguration(baseURL: "http://127.0.0.1:8080")
+  let refinement = WebSearchRefinement(maxResults: 6, language: "ja", timeRange: "week")
+  let url = try configuration.searchURL(for: "経済ニュース", refinement: refinement)
+  let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+
+  #expect(components.queryItems?.first(where: { $0.name == "language" })?.value == "ja")
+  #expect(components.queryItems?.first(where: { $0.name == "time_range" })?.value == "week")
+}
+
 @Test func searXNGDecodesStandardResults() throws {
   let data = Data("""
     {"results":[{"title":"Example","url":"https://example.com","content":"Snippet","engine":"brave"}]}

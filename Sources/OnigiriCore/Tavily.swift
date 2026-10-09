@@ -26,11 +26,16 @@ public struct TavilySearchRequest: Codable, Sendable, Equatable {
   public let includeImages: Bool
   public let topic: String
   public let safeSearch: Bool
+  public let timeRange: String?
+  public let language: String?
+  public let filterByLanguage: Bool
+  public let includeDomains: [String]
 
   public init(
     query: String, searchDepth: String = "basic", maxResults: Int = 8,
     includeAnswer: Bool = false, includeRawContent: Bool = false, includeImages: Bool = false,
-    topic: String = "general", safeSearch: Bool = true
+    topic: String = "general", safeSearch: Bool = true, timeRange: String? = nil,
+    language: String? = nil, filterByLanguage: Bool = false, includeDomains: [String] = []
   ) {
     self.query = query
     self.searchDepth = searchDepth
@@ -40,6 +45,10 @@ public struct TavilySearchRequest: Codable, Sendable, Equatable {
     self.includeImages = includeImages
     self.topic = topic
     self.safeSearch = safeSearch
+    self.timeRange = timeRange
+    self.language = language
+    self.filterByLanguage = filterByLanguage && language != nil
+    self.includeDomains = includeDomains
   }
 
   enum CodingKeys: String, CodingKey {
@@ -51,6 +60,10 @@ public struct TavilySearchRequest: Codable, Sendable, Equatable {
     case includeImages = "include_images"
     case topic
     case safeSearch = "safe_search"
+    case timeRange = "time_range"
+    case language
+    case filterByLanguage = "filter_by_language"
+    case includeDomains = "include_domains"
   }
 }
 
@@ -80,7 +93,8 @@ public enum TavilySearchAPI {
   public static let endpoint = URL(string: "https://api.tavily.com/search")!
 
   public static func makeRequest(
-    query: String, apiKey: String, maxResults: Int = 8
+    query: String, apiKey: String, maxResults: Int = 8,
+    refinement: WebSearchRefinement = WebSearchRefinement()
   ) throws -> URLRequest {
     let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !key.isEmpty else { throw TavilyError.missingAPIKey }
@@ -89,7 +103,11 @@ public enum TavilySearchAPI {
     request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.httpBody = try JSONEncoder().encode(
-      TavilySearchRequest(query: query, maxResults: maxResults))
+      TavilySearchRequest(
+        query: query, maxResults: refinement.maxResults == 8 ? maxResults : refinement.maxResults,
+        timeRange: refinement.timeRange, language: refinement.language,
+        filterByLanguage: refinement.language != nil,
+        includeDomains: refinement.includedDomains))
     return request
   }
 }

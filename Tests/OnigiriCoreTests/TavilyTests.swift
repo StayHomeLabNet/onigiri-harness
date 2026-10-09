@@ -24,6 +24,21 @@ import Testing
   }
 }
 
+@Test func tavilyIncludesSearchRefinements() throws {
+  let refinement = WebSearchRefinement(
+    maxResults: 6, language: "ja", timeRange: "week", includedDomains: ["https://example.com/path"])
+  let request = try TavilySearchAPI.makeRequest(
+    query: "経済ニュース", apiKey: "tvly-test-key", refinement: refinement)
+  let body = try #require(request.httpBody)
+  let payload = try JSONDecoder().decode(TavilySearchRequest.self, from: body)
+
+  #expect(payload.maxResults == 6)
+  #expect(payload.language == "ja")
+  #expect(payload.filterByLanguage)
+  #expect(payload.timeRange == "week")
+  #expect(payload.includeDomains == ["example.com"])
+}
+
 @Test func tavilyDecodesSearchResults() throws {
   let data = Data("""
     {"results":[{"title":"Example","url":"https://example.com","content":"Snippet","score":0.9}]}

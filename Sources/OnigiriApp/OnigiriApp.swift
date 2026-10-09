@@ -8070,6 +8070,10 @@ private struct WebResearchView: View {
   @AppStorage("onigiri.webResearch.homeShowsHistory") private var homeShowsHistory = true
   @AppStorage("onigiri.webResearch.homeShowsBookmarks") private var homeShowsBookmarks = true
   @AppStorage("onigiri.webResearch.pageZoom") private var browserPageZoom = 1.0
+  @AppStorage("onigiri.webResearch.searchMaxResults") private var searchMaxResults = 8
+  @AppStorage("onigiri.webResearch.searchLanguage") private var searchLanguage = "auto"
+  @AppStorage("onigiri.webResearch.searchTimeRange") private var searchTimeRange = "any"
+  @AppStorage("onigiri.webResearch.searchDomains") private var searchDomains = ""
   @StateObject private var browser = WebResearchBrowserModel()
   @State private var address = ""
   @State private var errorMessage: String?
@@ -8101,6 +8105,35 @@ private struct WebResearchView: View {
           .onChange(of: searXNGEnabled) { _, enabled in if enabled { tavilyEnabled = false } }
         Toggle("Tavilyを検索に使う", isOn: $tavilyEnabled)
           .onChange(of: tavilyEnabled) { _, enabled in if enabled { searXNGEnabled = false } }
+      }
+      .font(.caption)
+
+      DisclosureGroup("検索条件") {
+        HStack(spacing: 12) {
+          Stepper("検索結果数: \(searchMaxResults)", value: $searchMaxResults, in: 1...20)
+          Picker("期間", selection: $searchTimeRange) {
+            Text("指定なし").tag("any")
+            Text("過去24時間").tag("day")
+            Text("過去1週間").tag("week")
+            Text("過去1か月").tag("month")
+            Text("過去1年").tag("year")
+          }
+          .frame(maxWidth: 180)
+          Picker("言語", selection: $searchLanguage) {
+            Text("自動").tag("auto")
+            Text("日本語").tag("ja")
+            Text("English").tag("en")
+          }
+          .frame(maxWidth: 140)
+        }
+        HStack(spacing: 6) {
+          TextField("対象ドメイン（カンマ区切り）", text: $searchDomains)
+            .textFieldStyle(.roundedBorder)
+          Button("条件をリセット") { resetSearchRefinement() }
+        }
+        Text("期間・言語・対象ドメインは、利用する検索サービスが対応する範囲で適用します。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
       .font(.caption)
 
@@ -8358,7 +8391,8 @@ private struct WebResearchView: View {
     defer { searching = false }
     do {
       let configuration = SearXNGConfiguration(baseURL: searXNGBaseURL)
-      let url = try configuration.searchURL(for: query)
+      let refinement = webSearchRefinement
+      let url = try configuration.searchURL(for: query, refinement: refinement)
       let (data, response) = try await URLSession.shared.data(from: url)
       guard let http = response as? HTTPURLResponse else { throw SearXNGError.invalidResponse }
       guard (200..<300).contains(http.statusCode) else {
@@ -8368,7 +8402,10 @@ private struct WebResearchView: View {
       searchResults = decoded.results.filter {
         guard let url = URL(string: $0.url) else { return false }
         return ["http", "https"].contains(url.scheme?.lowercased() ?? "")
-      }.prefix(8).map { WebSearchResult(title: $0.title, url: $0.url, content: $0.content, provider: "SearXNG") }
+          && matchesIncludedDomains(url, domains: refinement.includedDomains)
+      }.prefix(refinement.maxResults).map {
+        WebSearchResult(title: $0.title, url: $0.url, content: $0.content, provider: "SearXNG")
+      }
       errorMessage = searchResults.isEmpty ? "SearXNG検索結果がありません。" : nil
     } catch {
       errorMessage = error.localizedDescription
@@ -8380,7 +8417,9 @@ private struct WebResearchView: View {
     searching = true
     defer { searching = false }
     do {
-      let request = try TavilySearchAPI.makeRequest(query: query, apiKey: tavilyAPIKey)
+      let refinement = webSearchRefinement
+      let request = try TavilySearchAPI.makeRequest(
+        query: query, apiKey: tavilyAPIKey, refinement: refinement)
       let (data, response) = try await URLSession.shared.data(for: request)
       guard let http = response as? HTTPURLResponse else { throw TavilyError.invalidResponse }
       guard (200..<300).contains(http.statusCode) else {
@@ -8390,12 +8429,38 @@ private struct WebResearchView: View {
       searchResults = decoded.results.filter {
         guard let url = URL(string: $0.url) else { return false }
         return ["http", "https"].contains(url.scheme?.lowercased() ?? "")
-      }.prefix(8).map { WebSearchResult(title: $0.title, url: $0.url, content: $0.content, provider: "Tavily") }
+          && matchesIncludedDomains(url, domains: refinement.includedDomains)
+      }.prefix(refinement.maxResults).map {
+        WebSearchResult(title: $0.title, url: $0.url, content: $0.content, provider: "Tavily")
+      }
       errorMessage = searchResults.isEmpty ? "Tavily検索結果がありません。" : nil
     } catch {
       errorMessage = error.localizedDescription
       searchResults = []
     }
+  }
+
+  private var webSearchRefinement: WebSearchRefinement {
+    WebSearchRefinement(
+      maxResults: searchMaxResults,
+      language: searchLanguage == "auto" ? nil : searchLanguage,
+      timeRange: searchTimeRange == "any" ? nil : searchTimeRange,
+      includedDomains: searchDomains.split(separator: ",").map(String.init))
+  }
+
+  private func matchesIncludedDomains(_ url: URL, domains: [String]) -> Bool {
+    guard !domains.isEmpty else { return true }
+    guard let host = url.host?.lowercased() else { return false }
+    return domains.contains { domain in
+      host == domain || host.hasSuffix(".\(domain)")
+    }
+  }
+
+  private func resetSearchRefinement() {
+    searchMaxResults = 8
+    searchLanguage = "auto"
+    searchTimeRange = "any"
+    searchDomains = ""
   }
 
   private func loadTavilyAPIKey() {
