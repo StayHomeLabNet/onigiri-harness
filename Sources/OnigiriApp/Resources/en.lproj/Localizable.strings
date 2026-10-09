@@ -80,6 +80,13 @@
 "対象ドメイン（カンマ区切り）" = "Domains to include (comma-separated)";
 "条件をリセット" = "Reset filters";
 "期間・言語・対象ドメインは、利用する検索サービスが対応する範囲で適用します。" = "Time range, language, and domains are applied when supported by the selected search service.";
+"プリセット" = "Presets";
+"新しいプリセット名" = "New preset name";
+"現在の条件を保存" = "Save current filters";
+"標準" = "Default";
+"最新ニュース" = "Latest news";
+"日本語優先" = "Prefer Japanese";
+"幅広く調査" = "Broad research";
 "閉じる" = "Close";
 "開く" = "Open";
 "適用" = "Apply";

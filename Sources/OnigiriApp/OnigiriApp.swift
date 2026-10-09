@@ -858,6 +858,7 @@ struct ChatView: View {
   @AppStorage("onigiri.chunkOverlapCharacters") private var chunkOverlapCharacters = 260
   @AppStorage("onigiri.ragEvaluationSuiteID") private var selectedRAGEvaluationSuiteID = ""
   @AppStorage("onigiri.tavily.enabled") private var tavilyWebResearchEnabled = false
+  @AppStorage("onigiri.uiLanguage") private var uiLanguageCode = AppLanguage.japanese.rawValue
   private let webResearchSecretStore = KeychainSecretStore()
 
   private var selectedConversation: StoredConversation? {
@@ -954,6 +955,7 @@ struct ChatView: View {
     }
     .sheet(isPresented: $showingWebResearch) {
       WebResearchView(sources: $queuedWebResearchSources)
+        .environment(\.locale, (AppLanguage(rawValue: uiLanguageCode) ?? .japanese).locale)
         .frame(minWidth: 900, minHeight: 650, alignment: .topLeading)
     }
     .sheet(isPresented: $showingMCPAudit) {
@@ -8061,6 +8063,36 @@ private struct WebSearchResult: Identifiable {
   var id: String { "\(provider):\(url)" }
 }
 
+private struct WebSearchPreset: Identifiable, Codable, Equatable {
+  let id: UUID
+  var name: String
+  var maxResults: Int
+  var language: String
+  var timeRange: String
+  var domains: String
+  var isBuiltIn: Bool
+
+  init(
+    id: UUID = UUID(), name: String, maxResults: Int = 8, language: String = "auto",
+    timeRange: String = "any", domains: String = "", isBuiltIn: Bool = false
+  ) {
+    self.id = id
+    self.name = name
+    self.maxResults = maxResults
+    self.language = language
+    self.timeRange = timeRange
+    self.domains = domains
+    self.isBuiltIn = isBuiltIn
+  }
+
+  static let builtIns = [
+    WebSearchPreset(name: "標準", isBuiltIn: true),
+    WebSearchPreset(name: "最新ニュース", maxResults: 8, timeRange: "day", isBuiltIn: true),
+    WebSearchPreset(name: "日本語優先", language: "ja", isBuiltIn: true),
+    WebSearchPreset(name: "幅広く調査", maxResults: 15, isBuiltIn: true),
+  ]
+}
+
 private struct WebResearchView: View {
   @Binding var sources: [WebResearchSource]
   @Environment(\.dismiss) private var dismiss
@@ -8083,7 +8115,10 @@ private struct WebResearchView: View {
   @State private var tavilyAPIKey = ""
   @State private var showingBookmarks = false
   @State private var showingHistory = false
+  @State private var customSearchPresets = WebResearchView.loadSearchPresets()
+  @State private var newPresetName = ""
   private let secretStore = KeychainSecretStore()
+  private static let searchPresetsDefaultsKey = "onigiri.webResearch.searchPresets"
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -8109,6 +8144,20 @@ private struct WebResearchView: View {
       .font(.caption)
 
       DisclosureGroup("検索条件") {
+        HStack(spacing: 6) {
+          Menu("プリセット") {
+            ForEach(WebSearchPreset.builtIns + customSearchPresets) { preset in
+              Button(LocalizedStringKey(preset.name)) { applySearchPreset(preset) }
+            }
+          }
+          .accessibilityLabel("プリセット")
+          TextField("新しいプリセット名", text: $newPresetName)
+            .textFieldStyle(.roundedBorder)
+          Button("現在の条件を保存", systemImage: "square.and.arrow.down") {
+            saveCurrentSearchPreset()
+          }
+          .disabled(newPresetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
         HStack(spacing: 12) {
           Stepper("検索結果数: \(searchMaxResults)", value: $searchMaxResults, in: 1...20)
           Picker("期間", selection: $searchTimeRange) {
@@ -8130,6 +8179,18 @@ private struct WebResearchView: View {
           TextField("対象ドメイン（カンマ区切り）", text: $searchDomains)
             .textFieldStyle(.roundedBorder)
           Button("条件をリセット") { resetSearchRefinement() }
+        }
+        if !customSearchPresets.isEmpty {
+          ForEach(customSearchPresets) { preset in
+            HStack {
+              Text(preset.name).lineLimit(1)
+              Spacer()
+              Button("削除", systemImage: "trash") { deleteSearchPreset(preset) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("削除")
+            }
+          }
         }
         Text("期間・言語・対象ドメインは、利用する検索サービスが対応する範囲で適用します。")
           .font(.caption)
@@ -8461,6 +8522,43 @@ private struct WebResearchView: View {
     searchLanguage = "auto"
     searchTimeRange = "any"
     searchDomains = ""
+  }
+
+  private func applySearchPreset(_ preset: WebSearchPreset) {
+    searchMaxResults = preset.maxResults
+    searchLanguage = preset.language
+    searchTimeRange = preset.timeRange
+    searchDomains = preset.domains
+  }
+
+  private func saveCurrentSearchPreset() {
+    let name = newPresetName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else { return }
+    let preset = WebSearchPreset(
+      name: name, maxResults: searchMaxResults, language: searchLanguage,
+      timeRange: searchTimeRange, domains: searchDomains)
+    customSearchPresets.removeAll { $0.name == name }
+    customSearchPresets.append(preset)
+    customSearchPresets.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    persistSearchPresets()
+    newPresetName = ""
+  }
+
+  private func deleteSearchPreset(_ preset: WebSearchPreset) {
+    customSearchPresets.removeAll { $0.id == preset.id }
+    persistSearchPresets()
+  }
+
+  private func persistSearchPresets() {
+    guard let data = try? JSONEncoder().encode(customSearchPresets) else { return }
+    UserDefaults.standard.set(data, forKey: Self.searchPresetsDefaultsKey)
+  }
+
+  private static func loadSearchPresets() -> [WebSearchPreset] {
+    guard let data = UserDefaults.standard.data(forKey: searchPresetsDefaultsKey),
+      let presets = try? JSONDecoder().decode([WebSearchPreset].self, from: data)
+    else { return [] }
+    return presets.filter { !$0.isBuiltIn }
   }
 
   private func loadTavilyAPIKey() {
