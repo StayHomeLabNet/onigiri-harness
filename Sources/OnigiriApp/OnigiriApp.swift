@@ -96,6 +96,7 @@ private struct WebResearchSettingsView: View {
   @AppStorage("onigiri.webResearch.saveHistory") private var savesBrowserHistory = true
   @AppStorage("onigiri.webResearch.homeShowsHistory") private var homeShowsHistory = true
   @AppStorage("onigiri.webResearch.homeShowsBookmarks") private var homeShowsBookmarks = true
+  @AppStorage("onigiri.webResearch.pageZoom") private var browserPageZoom = 1.0
   @AppStorage("onigiri.webResearch.opensExternalLinksExternally") private var opensExternalLinksExternally = false
   @State private var tavilyAPIKey = ""
   @State private var tavilyKeychainMessage: String?
@@ -153,6 +154,13 @@ private struct WebResearchSettingsView: View {
         Toggle("ホーム画面にブックマークを表示", isOn: $homeShowsBookmarks)
         Toggle("ホーム画面に最近の履歴を表示", isOn: $homeShowsHistory)
         Toggle("リンクを外部ブラウザで開く", isOn: $opensExternalLinksExternally)
+        HStack {
+          Text("ページ表示倍率")
+          Slider(value: $browserPageZoom, in: 0.7...1.5, step: 0.1)
+          Text(browserPageZoom.formatted(.percent.precision(.fractionLength(0))))
+            .monospacedDigit()
+            .frame(width: 44, alignment: .trailing)
+        }
         Text("この設定をオンにすると、ページ内で選んだ外部リンクを既定のブラウザで開きます。")
           .font(.caption)
           .foregroundStyle(.secondary)
@@ -7824,12 +7832,15 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
   private static let historyDefaultsKey = "onigiri.webResearch.browserHistory"
   private static let savesHistoryDefaultsKey = "onigiri.webResearch.saveHistory"
   private static let opensExternalLinksDefaultsKey = "onigiri.webResearch.opensExternalLinksExternally"
+  private static let pageZoomDefaultsKey = "onigiri.webResearch.pageZoom"
   private static let maximumHistoryEntries = 100
 
   let webView: WKWebView
   @Published var location = ""
   @Published var title = "Webリサーチ"
   @Published var isLoading = false
+  @Published private(set) var pageZoom = 1.0
+  @Published private(set) var navigationError: String?
   @Published private(set) var canGoBack = false
   @Published private(set) var canGoForward = false
   @Published private(set) var bookmarks: [WebResearchBrowserBookmark] = []
@@ -7840,6 +7851,9 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
     webView = WKWebView(frame: .zero, configuration: configuration)
     super.init()
     webView.navigationDelegate = self
+    let savedZoom = UserDefaults.standard.object(forKey: Self.pageZoomDefaultsKey) == nil
+      ? 1.0 : UserDefaults.standard.double(forKey: Self.pageZoomDefaultsKey)
+    setPageZoom(savedZoom)
     bookmarks = Self.load(WebResearchBrowserBookmark.self, key: Self.bookmarksDefaultsKey)
     history = Self.load(WebResearchBrowserHistoryEntry.self, key: Self.historyDefaultsKey)
   }
@@ -7860,6 +7874,17 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
   func goForward() {
     guard webView.canGoForward else { return }
     webView.goForward()
+  }
+
+  func reload() {
+    guard !location.isEmpty else { return }
+    webView.reload()
+  }
+
+  func setPageZoom(_ value: Double) {
+    let normalized = min(max(value, 0.7), 1.5)
+    pageZoom = normalized
+    webView.pageZoom = CGFloat(normalized)
   }
 
   var isCurrentPageBookmarked: Bool {
@@ -7923,11 +7948,13 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
 
   func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
     isLoading = true
+    navigationError = nil
     updateNavigationState()
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     isLoading = false
+    navigationError = nil
     location = webView.url?.absoluteString ?? location
     title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Webページ"
     updateNavigationState()
@@ -7938,6 +7965,7 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
     _ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error
   ) {
     isLoading = false
+    navigationError = error.localizedDescription
     updateNavigationState()
   }
 
@@ -7945,6 +7973,7 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
     _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error
   ) {
     isLoading = false
+    navigationError = error.localizedDescription
     updateNavigationState()
   }
 
@@ -8040,6 +8069,7 @@ private struct WebResearchView: View {
   @AppStorage("onigiri.tavily.enabled") private var tavilyEnabled = false
   @AppStorage("onigiri.webResearch.homeShowsHistory") private var homeShowsHistory = true
   @AppStorage("onigiri.webResearch.homeShowsBookmarks") private var homeShowsBookmarks = true
+  @AppStorage("onigiri.webResearch.pageZoom") private var browserPageZoom = 1.0
   @StateObject private var browser = WebResearchBrowserModel()
   @State private var address = ""
   @State private var errorMessage: String?
@@ -8118,6 +8148,9 @@ private struct WebResearchView: View {
       if let errorMessage {
         Text(errorMessage).font(.caption).foregroundStyle(.red).textSelection(.enabled)
       }
+      if let navigationError = browser.navigationError {
+        Text(navigationError).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+      }
 
       if !sources.isEmpty {
         VStack(alignment: .leading, spacing: 4) {
@@ -8165,7 +8198,9 @@ private struct WebResearchView: View {
     .onAppear {
       if address.isEmpty { address = browser.location }
       loadTavilyAPIKey()
+      browser.setPageZoom(browserPageZoom)
     }
+    .onChange(of: browserPageZoom) { _, value in browser.setPageZoom(value) }
     .sheet(isPresented: $showingBookmarks) {
       WebResearchBookmarksView(
         bookmarks: browser.bookmarks,
@@ -8194,14 +8229,26 @@ private struct WebResearchView: View {
       Button("ホーム", systemImage: "house") { browser.goHome() }
         .labelStyle(.iconOnly)
         .help("ホーム")
+        .accessibilityLabel("ホーム")
+        .keyboardShortcut("h", modifiers: [.command, .shift])
       Button("戻る", systemImage: "chevron.backward") { browser.goBack() }
         .labelStyle(.iconOnly)
         .help("戻る")
+        .accessibilityLabel("戻る")
+        .keyboardShortcut("[", modifiers: .command)
         .disabled(!browser.canGoBack)
       Button("進む", systemImage: "chevron.forward") { browser.goForward() }
         .labelStyle(.iconOnly)
         .help("進む")
+        .accessibilityLabel("進む")
+        .keyboardShortcut("]", modifiers: .command)
         .disabled(!browser.canGoForward)
+      Button("再読み込み", systemImage: "arrow.clockwise") { browser.reload() }
+        .labelStyle(.iconOnly)
+        .help("再読み込み")
+        .accessibilityLabel("再読み込み")
+        .keyboardShortcut("r", modifiers: .command)
+        .disabled(browser.location.isEmpty || browser.isLoading)
       Divider().frame(height: 16)
       Button(browser.isCurrentPageBookmarked ? "ブックマークから削除" : "ブックマークに追加",
         systemImage: browser.isCurrentPageBookmarked ? "bookmark.fill" : "bookmark") {
@@ -8209,6 +8256,8 @@ private struct WebResearchView: View {
       }
       .labelStyle(.iconOnly)
       .help(browser.isCurrentPageBookmarked ? "ブックマークから削除" : "ブックマークに追加")
+      .accessibilityLabel(browser.isCurrentPageBookmarked ? "ブックマークから削除" : "ブックマークに追加")
+      .keyboardShortcut("d", modifiers: .command)
       .disabled(browser.location.isEmpty)
       Button("ブックマーク", systemImage: "book") { showingBookmarks = true }
         .labelStyle(.iconOnly)
@@ -8216,8 +8265,24 @@ private struct WebResearchView: View {
       Button("履歴", systemImage: "clock") { showingHistory = true }
         .labelStyle(.iconOnly)
         .help("履歴")
+      Divider().frame(height: 16)
+      Button("縮小", systemImage: "textformat.size.smaller") {
+        browserPageZoom = max(0.7, browserPageZoom - 0.1)
+      }
+      .labelStyle(.iconOnly)
+      .help("縮小")
+      .accessibilityLabel("縮小")
+      .disabled(browserPageZoom <= 0.7)
+      Button("拡大", systemImage: "textformat.size.larger") {
+        browserPageZoom = min(1.5, browserPageZoom + 0.1)
+      }
+      .labelStyle(.iconOnly)
+      .help("拡大")
+      .accessibilityLabel("拡大")
+      .disabled(browserPageZoom >= 1.5)
       Spacer()
       Text(browser.title).font(.caption).lineLimit(1)
+        .accessibilityLabel("現在のページ: \(browser.title)")
     }
     .buttonStyle(.borderless)
   }

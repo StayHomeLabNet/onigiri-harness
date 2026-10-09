@@ -61,6 +61,11 @@
 "保存した閲覧履歴を消去しました。" = "Saved browsing history was cleared.";
 "保存したブックマークを消去しました。" = "Saved bookmarks were cleared.";
 "CookieとWebサイトデータを消去しました。" = "Cookies and website data were cleared.";
+"ページ表示倍率" = "Page zoom";
+"再読み込み" = "Reload";
+"縮小" = "Zoom out";
+"拡大" = "Zoom in";
+"現在のページ: %@" = "Current page: %@";
 "閉じる" = "Close";
 "開く" = "Open";
 "適用" = "Apply";
