@@ -53,9 +53,21 @@ struct OnigiriApp: App {
       .defaultSize(width: 980, height: 640)
 
     Settings {
-      LanguageSettingsView()
+      OnigiriSettingsView()
         .environment(\.locale, language.locale)
     }
+  }
+}
+
+private struct OnigiriSettingsView: View {
+  var body: some View {
+    TabView {
+      LanguageSettingsView()
+        .tabItem { Label("一般", systemImage: "gearshape") }
+      WebResearchSettingsView()
+        .tabItem { Label("Webリサーチ", systemImage: "globe") }
+    }
+    .frame(width: 540, height: 420)
   }
 }
 
@@ -76,6 +88,157 @@ private struct LanguageSettingsView: View {
     .formStyle(.grouped)
     .frame(width: 420)
     .padding(12)
+  }
+}
+
+private struct WebResearchSettingsView: View {
+  @AppStorage("onigiri.searxng.baseURL") private var searXNGBaseURL = "http://127.0.0.1:8080"
+  @AppStorage("onigiri.webResearch.saveHistory") private var savesBrowserHistory = true
+  @AppStorage("onigiri.webResearch.homeShowsHistory") private var homeShowsHistory = true
+  @State private var tavilyAPIKey = ""
+  @State private var tavilyKeychainMessage: String?
+  @State private var searXNGDiagnostic: WebResearchDiagnostic?
+  @State private var tavilyDiagnostic: WebResearchDiagnostic?
+  @State private var checking = false
+  private let secretStore = KeychainSecretStore()
+
+  var body: some View {
+    Form {
+      Section("SearXNGローカル連携") {
+        HStack(spacing: 6) {
+          TextField("SearXNG URL", text: $searXNGBaseURL)
+          Button("接続確認", systemImage: "checkmark.arrow.trianglehead.2.clockwise") {
+            Task { await checkSearXNGConnection() }
+          }
+          .disabled(checking)
+        }
+        Text("このMacで起動したSearXNGのloopback URLだけを使います。例: http://127.0.0.1:8080")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        providerDiagnosticView(searXNGDiagnostic)
+      }
+
+      Section("Tavily連携") {
+        HStack(spacing: 6) {
+          SecureField("Tavily API key（Keychain）", text: $tavilyAPIKey)
+          Button("Keychainへ保存", systemImage: "key.fill") { saveTavilyAPIKey() }
+            .labelStyle(.iconOnly)
+            .help("Tavily API keyをKeychainへ保存")
+          Button("Keychainから読み込む", systemImage: "arrow.down.to.line") { loadTavilyAPIKey() }
+            .labelStyle(.iconOnly)
+            .help("Tavily API keyをKeychainから読み込む")
+          Button("Keychainから削除", systemImage: "trash") { deleteTavilyAPIKey() }
+            .labelStyle(.iconOnly)
+            .help("保存済みのTavily API keyをKeychainから削除")
+          Button("接続確認", systemImage: "checkmark.arrow.trianglehead.2.clockwise") {
+            Task { await checkTavilyConnection() }
+          }
+          .disabled(checking)
+        }
+        Text("Web検索・最新情報の依頼では、検索語をTavilyへ自動送信します。上位結果はその回答だけの情報源として表示されます。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        if let tavilyKeychainMessage {
+          Text(tavilyKeychainMessage).font(.caption).foregroundStyle(.secondary)
+        }
+        providerDiagnosticView(tavilyDiagnostic)
+      }
+
+      Section("ブラウザ") {
+        Toggle("閲覧履歴を保存", isOn: $savesBrowserHistory)
+        Toggle("ホーム画面に最近の履歴を表示", isOn: $homeShowsHistory)
+        Text("ブックマークと履歴はWebリサーチのブラウザから管理できます。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .formStyle(.grouped)
+    .padding(12)
+    .onAppear { loadTavilyAPIKey() }
+  }
+
+  @ViewBuilder private func providerDiagnosticView(_ diagnostic: WebResearchDiagnostic?) -> some View {
+    if let diagnostic {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(diagnostic.summary).foregroundStyle(diagnostic.isSuccess ? .green : .red)
+        Text(diagnostic.detail).foregroundStyle(.secondary)
+      }
+      .font(.caption)
+      .textSelection(.enabled)
+    }
+  }
+
+  private func checkSearXNGConnection() async {
+    checking = true
+    defer { checking = false }
+    do {
+      let url = try SearXNGConfiguration(baseURL: searXNGBaseURL).searchURL(for: "Onigiri Harness")
+      let startedAt = Date()
+      let (data, response) = try await URLSession.shared.data(from: url)
+      guard let http = response as? HTTPURLResponse else { throw SearXNGError.invalidResponse }
+      guard (200..<300).contains(http.statusCode) else {
+        searXNGDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: .searXNG, statusCode: http.statusCode)
+        return
+      }
+      let decoded = try JSONDecoder().decode(SearXNGSearchResponse.self, from: data)
+      searXNGDiagnostic = WebResearchDiagnosticAdvisor.success(
+        provider: .searXNG, resultCount: decoded.results.count,
+        elapsedMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000))
+    } catch is URLError {
+      searXNGDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: .searXNG, isNetworkError: true)
+    } catch {
+      searXNGDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: .searXNG)
+    }
+  }
+
+  private func checkTavilyConnection() async {
+    checking = true
+    defer { checking = false }
+    do {
+      let request = try TavilySearchAPI.makeRequest(query: "Onigiri Harness", apiKey: tavilyAPIKey)
+      let startedAt = Date()
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse else { throw TavilyError.invalidResponse }
+      guard (200..<300).contains(http.statusCode) else {
+        tavilyDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: .tavily, statusCode: http.statusCode)
+        return
+      }
+      let decoded = try JSONDecoder().decode(TavilySearchResponse.self, from: data)
+      tavilyDiagnostic = WebResearchDiagnosticAdvisor.success(
+        provider: .tavily, resultCount: decoded.results.count,
+        elapsedMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000))
+    } catch is URLError {
+      tavilyDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: .tavily, isNetworkError: true)
+    } catch {
+      tavilyDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: .tavily)
+    }
+  }
+
+  private func loadTavilyAPIKey() {
+    do {
+      tavilyAPIKey = try secretStore.read(account: "web-research.tavily") ?? ""
+      tavilyKeychainMessage = tavilyAPIKey.isEmpty ? "Keychainに保存済みのTavily API keyはありません。" : "Tavily API keyをKeychainから読み込みました。"
+    } catch { tavilyKeychainMessage = error.localizedDescription }
+  }
+
+  private func saveTavilyAPIKey() {
+    let key = tavilyAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !key.isEmpty else {
+      tavilyKeychainMessage = "保存するTavily API keyを入力してください。"
+      return
+    }
+    do {
+      try secretStore.save(key, account: "web-research.tavily")
+      tavilyKeychainMessage = "Tavily API keyをKeychainへ保存しました。"
+    } catch { tavilyKeychainMessage = error.localizedDescription }
+  }
+
+  private func deleteTavilyAPIKey() {
+    do {
+      try secretStore.delete(account: "web-research.tavily")
+      tavilyAPIKey = ""
+      tavilyKeychainMessage = "Tavily API keyをKeychainから削除しました。"
+    } catch { tavilyKeychainMessage = error.localizedDescription }
   }
 }
 
@@ -7622,6 +7785,7 @@ private struct WebResearchBrowserHistoryEntry: Codable, Identifiable, Equatable 
 private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavigationDelegate {
   private static let bookmarksDefaultsKey = "onigiri.webResearch.browserBookmarks"
   private static let historyDefaultsKey = "onigiri.webResearch.browserHistory"
+  private static let savesHistoryDefaultsKey = "onigiri.webResearch.saveHistory"
   private static let maximumHistoryEntries = 100
 
   let webView: WKWebView
@@ -7764,6 +7928,9 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
   }
 
   private func recordHistory() {
+    guard UserDefaults.standard.object(forKey: Self.savesHistoryDefaultsKey) == nil
+      || UserDefaults.standard.bool(forKey: Self.savesHistoryDefaultsKey)
+    else { return }
     guard let url = webView.url?.absoluteString,
       ["http", "https"].contains(webView.url?.scheme?.lowercased() ?? "")
     else { return }
@@ -7809,6 +7976,7 @@ private struct WebResearchView: View {
   @AppStorage("onigiri.searxng.enabled") private var searXNGEnabled = false
   @AppStorage("onigiri.searxng.baseURL") private var searXNGBaseURL = "http://127.0.0.1:8080"
   @AppStorage("onigiri.tavily.enabled") private var tavilyEnabled = false
+  @AppStorage("onigiri.webResearch.homeShowsHistory") private var homeShowsHistory = true
   @StateObject private var browser = WebResearchBrowserModel()
   @State private var address = ""
   @State private var errorMessage: String?
@@ -7816,9 +7984,6 @@ private struct WebResearchView: View {
   @State private var searching = false
   @State private var searchResults: [WebSearchResult] = []
   @State private var tavilyAPIKey = ""
-  @State private var tavilyKeychainMessage: String?
-  @State private var searXNGDiagnostic: WebResearchDiagnostic?
-  @State private var tavilyDiagnostic: WebResearchDiagnostic?
   @State private var showingBookmarks = false
   @State private var showingHistory = false
   private let secretStore = KeychainSecretStore()
@@ -7843,52 +8008,6 @@ private struct WebResearchView: View {
           .onChange(of: searXNGEnabled) { _, enabled in if enabled { tavilyEnabled = false } }
         Toggle("Tavilyを検索に使う", isOn: $tavilyEnabled)
           .onChange(of: tavilyEnabled) { _, enabled in if enabled { searXNGEnabled = false } }
-      }
-      .font(.caption)
-
-      DisclosureGroup("SearXNGローカル連携") {
-        HStack(spacing: 6) {
-          TextField("SearXNG URL", text: $searXNGBaseURL)
-            .textFieldStyle(.roundedBorder)
-          Button("接続確認", systemImage: "checkmark.arrow.trianglehead.2.clockwise") {
-            Task { await checkSearXNGConnection() }
-          }
-          .disabled(searching)
-        }
-        Text("このMacで起動したSearXNGのloopback URLだけを使います。例: http://127.0.0.1:8080")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        providerDiagnosticView(searXNGDiagnostic)
-      }
-      .font(.caption)
-
-      DisclosureGroup("Tavily連携") {
-        HStack(spacing: 6) {
-          SecureField("Tavily API key（Keychain）", text: $tavilyAPIKey)
-            .textFieldStyle(.roundedBorder)
-          Button("Keychainへ保存", systemImage: "key.fill") { saveTavilyAPIKey() }
-            .labelStyle(.iconOnly)
-            .help("Tavily API keyをKeychainへ保存")
-          Button("Keychainから読み込む", systemImage: "arrow.down.to.line") {
-            loadTavilyAPIKey()
-          }
-          .labelStyle(.iconOnly)
-          .help("Tavily API keyをKeychainから読み込む")
-          Button("Keychainから削除", systemImage: "trash") { deleteTavilyAPIKey() }
-            .labelStyle(.iconOnly)
-            .help("保存済みのTavily API keyをKeychainから削除")
-          Button("接続確認", systemImage: "checkmark.arrow.trianglehead.2.clockwise") {
-            Task { await checkTavilyConnection() }
-          }
-          .disabled(searching)
-        }
-        Text("Web検索・最新情報の依頼では、検索語をTavilyへ自動送信します。上位結果はその回答だけの情報源として表示されます。")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        if let tavilyKeychainMessage {
-          Text(tavilyKeychainMessage).font(.caption).foregroundStyle(.secondary)
-        }
-        providerDiagnosticView(tavilyDiagnostic)
       }
       .font(.caption)
 
@@ -8058,7 +8177,7 @@ private struct WebResearchView: View {
             }
           }
         }
-        if !browser.history.isEmpty {
+        if homeShowsHistory && !browser.history.isEmpty {
           Text("最近の履歴").font(.caption.bold())
           ForEach(browser.history.prefix(5)) { entry in
             browserHomeLink(title: entry.title, url: entry.url) {
@@ -8151,97 +8270,10 @@ private struct WebResearchView: View {
     }
   }
 
-  @ViewBuilder private func providerDiagnosticView(_ diagnostic: WebResearchDiagnostic?) -> some View {
-    if let diagnostic {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(diagnostic.summary)
-          .foregroundStyle(diagnostic.isSuccess ? .green : .red)
-        Text(diagnostic.detail).foregroundStyle(.secondary)
-      }
-      .font(.caption)
-      .textSelection(.enabled)
-    }
-  }
-
-  private func checkSearXNGConnection() async {
-    searching = true
-    defer { searching = false }
-    let provider: WebResearchProvider = .searXNG
-    do {
-      let url = try SearXNGConfiguration(baseURL: searXNGBaseURL).searchURL(for: "Onigiri Harness")
-      let startedAt = Date()
-      let (data, response) = try await URLSession.shared.data(from: url)
-      guard let http = response as? HTTPURLResponse else { throw SearXNGError.invalidResponse }
-      guard (200..<300).contains(http.statusCode) else {
-        searXNGDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider, statusCode: http.statusCode)
-        return
-      }
-      let decoded = try JSONDecoder().decode(SearXNGSearchResponse.self, from: data)
-      let elapsed = Int(Date().timeIntervalSince(startedAt) * 1_000)
-      searXNGDiagnostic = WebResearchDiagnosticAdvisor.success(
-        provider: provider, resultCount: decoded.results.count, elapsedMilliseconds: elapsed)
-    } catch is URLError {
-      searXNGDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider, isNetworkError: true)
-    } catch {
-      searXNGDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider)
-    }
-  }
-
-  private func checkTavilyConnection() async {
-    searching = true
-    defer { searching = false }
-    let provider: WebResearchProvider = .tavily
-    do {
-      let request = try TavilySearchAPI.makeRequest(query: "Onigiri Harness", apiKey: tavilyAPIKey)
-      let startedAt = Date()
-      let (data, response) = try await URLSession.shared.data(for: request)
-      guard let http = response as? HTTPURLResponse else { throw TavilyError.invalidResponse }
-      guard (200..<300).contains(http.statusCode) else {
-        tavilyDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider, statusCode: http.statusCode)
-        return
-      }
-      let decoded = try JSONDecoder().decode(TavilySearchResponse.self, from: data)
-      let elapsed = Int(Date().timeIntervalSince(startedAt) * 1_000)
-      tavilyDiagnostic = WebResearchDiagnosticAdvisor.success(
-        provider: provider, resultCount: decoded.results.count, elapsedMilliseconds: elapsed)
-    } catch is URLError {
-      tavilyDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider, isNetworkError: true)
-    } catch {
-      tavilyDiagnostic = WebResearchDiagnosticAdvisor.failure(provider: provider)
-    }
-  }
-
   private func loadTavilyAPIKey() {
     do {
       tavilyAPIKey = try secretStore.read(account: "web-research.tavily") ?? ""
-      tavilyKeychainMessage = tavilyAPIKey.isEmpty ? "Keychainに保存済みのTavily API keyはありません。" : "Tavily API keyをKeychainから読み込みました。"
-    } catch {
-      tavilyKeychainMessage = error.localizedDescription
-    }
-  }
-
-  private func saveTavilyAPIKey() {
-    let key = tavilyAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !key.isEmpty else {
-      tavilyKeychainMessage = "保存するTavily API keyを入力してください。"
-      return
-    }
-    do {
-      try secretStore.save(key, account: "web-research.tavily")
-      tavilyKeychainMessage = "Tavily API keyをKeychainへ保存しました。"
-    } catch {
-      tavilyKeychainMessage = error.localizedDescription
-    }
-  }
-
-  private func deleteTavilyAPIKey() {
-    do {
-      try secretStore.delete(account: "web-research.tavily")
-      tavilyAPIKey = ""
-      tavilyKeychainMessage = "Tavily API keyをKeychainから削除しました。"
-    } catch {
-      tavilyKeychainMessage = error.localizedDescription
-    }
+    } catch { tavilyAPIKey = "" }
   }
 }
 

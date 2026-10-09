@@ -46,6 +46,11 @@
 "選択" = "Select";
 "追加" = "Add";
 "削除" = "Delete";
+"一般" = "General";
+"ブラウザ" = "Browser";
+"閲覧履歴を保存" = "Save browsing history";
+"ホーム画面に最近の履歴を表示" = "Show recent history on the home page";
+"ブックマークと履歴はWebリサーチのブラウザから管理できます。" = "Bookmarks and browsing history can be managed from the Web Research browser.";
 "閉じる" = "Close";
 "開く" = "Open";
 "適用" = "Apply";
