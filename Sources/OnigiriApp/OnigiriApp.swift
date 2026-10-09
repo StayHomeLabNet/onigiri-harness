@@ -289,6 +289,10 @@ private extension RAGMode {
     case .agentic: return "Agentic RAG"
     }
   }
+
+  func availabilityLabel(hasKnowledge: Bool) -> String {
+    hasKnowledge ? displayName : "資料なし"
+  }
 }
 
 private struct KnowledgeSearchFeedback: Identifiable, Equatable, Codable {
@@ -1020,7 +1024,7 @@ struct ChatView: View {
               .padding(.top, 70)
             }
             ForEach(messages) { item in
-              MessageRow(message: item) { citation in
+              MessageRow(message: item, hasAvailableKnowledge: knowledgeStatus.chunkCount > 0) { citation in
                 selectedCitation = citation
               }
               .id(item.id)
@@ -1177,7 +1181,8 @@ struct ChatView: View {
         }
         Button("管理") { showingProductProfiles = true }
           .disabled(busy)
-        Text(LocalizedStringKey(selectedRAGMode.displayName))
+        Text(LocalizedStringKey(selectedRAGMode.availabilityLabel(
+          hasKnowledge: knowledgeStatus.chunkCount > 0)))
           .font(.caption)
           .foregroundStyle(.secondary)
         Spacer(minLength: 8)
@@ -8022,6 +8027,7 @@ private struct WebResearchView: View {
 
 private struct MessageRow: View {
   let message: DisplayMessage
+  let hasAvailableKnowledge: Bool
   let showCitation: (KnowledgeChunkMatch) -> Void
 
   var body: some View {
@@ -8032,12 +8038,15 @@ private struct MessageRow: View {
           Text(message.role == .user ? "あなた" : "Onigiri")
             .font(.caption.bold()).foregroundStyle(.secondary)
           if let ragMode = message.ragMode {
-            Text(LocalizedStringKey(ragMode.displayName))
+            Text(LocalizedStringKey(ragMode.availabilityLabel(hasKnowledge: hasAvailableKnowledge)))
               .font(.caption2)
               .padding(.horizontal, 6)
               .padding(.vertical, 2)
               .background(Color.secondary.opacity(0.12))
               .clipShape(Capsule())
+              .help(
+                hasAvailableKnowledge
+                  ? ragMode.displayName : "資料が追加されるまでRAGは参照しません。")
           }
           Spacer()
           Button("コピー", systemImage: "doc.on.doc") {

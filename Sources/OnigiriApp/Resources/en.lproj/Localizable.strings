@@ -20,6 +20,8 @@
 "候補" = "Suggestions";
 "未指定" = "Not specified";
 "RAGなし" = "RAG off";
+"資料なし" = "No knowledge";
+"資料が追加されるまでRAGは参照しません。" = "RAG will not retrieve anything until knowledge is added.";
 "RAG常時" = "RAG always";
 "バランス" = "Balanced";
 "キーワード重視" = "Keyword focused";
