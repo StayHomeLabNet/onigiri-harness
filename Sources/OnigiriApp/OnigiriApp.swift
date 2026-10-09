@@ -7604,18 +7604,93 @@ private struct ConversationRow: View {
   }
 }
 
+private struct WebResearchBrowserBookmark: Codable, Identifiable, Equatable {
+  let id: UUID
+  let title: String
+  let url: String
+  let createdAt: Date
+}
+
+private struct WebResearchBrowserHistoryEntry: Codable, Identifiable, Equatable {
+  let id: UUID
+  let title: String
+  let url: String
+  let visitedAt: Date
+}
+
 @MainActor
 private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavigationDelegate {
+  private static let bookmarksDefaultsKey = "onigiri.webResearch.browserBookmarks"
+  private static let historyDefaultsKey = "onigiri.webResearch.browserHistory"
+  private static let maximumHistoryEntries = 100
+
   let webView: WKWebView
   @Published var location = ""
   @Published var title = "Webリサーチ"
   @Published var isLoading = false
+  @Published private(set) var canGoBack = false
+  @Published private(set) var canGoForward = false
+  @Published private(set) var bookmarks: [WebResearchBrowserBookmark] = []
+  @Published private(set) var history: [WebResearchBrowserHistoryEntry] = []
 
   override init() {
     let configuration = WKWebViewConfiguration()
     webView = WKWebView(frame: .zero, configuration: configuration)
     super.init()
     webView.navigationDelegate = self
+    bookmarks = Self.load(WebResearchBrowserBookmark.self, key: Self.bookmarksDefaultsKey)
+    history = Self.load(WebResearchBrowserHistoryEntry.self, key: Self.historyDefaultsKey)
+  }
+
+  func goHome() {
+    webView.stopLoading()
+    location = ""
+    title = "Webリサーチ"
+    isLoading = false
+    updateNavigationState()
+  }
+
+  func goBack() {
+    guard webView.canGoBack else { return }
+    webView.goBack()
+  }
+
+  func goForward() {
+    guard webView.canGoForward else { return }
+    webView.goForward()
+  }
+
+  var isCurrentPageBookmarked: Bool {
+    bookmarks.contains { $0.url == location }
+  }
+
+  func toggleBookmark() {
+    guard let url = webView.url?.absoluteString,
+      ["http", "https"].contains(webView.url?.scheme?.lowercased() ?? "")
+    else { return }
+    if let index = bookmarks.firstIndex(where: { $0.url == url }) {
+      bookmarks.remove(at: index)
+    } else {
+      bookmarks.insert(
+        WebResearchBrowserBookmark(
+          id: UUID(), title: title, url: url, createdAt: Date()), at: 0)
+    }
+    save(bookmarks, key: Self.bookmarksDefaultsKey)
+  }
+
+  func removeBookmark(_ bookmark: WebResearchBrowserBookmark) {
+    bookmarks.removeAll { $0.id == bookmark.id }
+    save(bookmarks, key: Self.bookmarksDefaultsKey)
+  }
+
+  func removeHistoryEntry(_ entry: WebResearchBrowserHistoryEntry) {
+    history.removeAll { $0.id == entry.id }
+    save(history, key: Self.historyDefaultsKey)
+  }
+
+  func clearHistory() {
+    history = []
+    save(history, key: Self.historyDefaultsKey)
   }
 
   func load(address: String) {
@@ -7638,24 +7713,29 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
 
   func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
     isLoading = true
+    updateNavigationState()
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     isLoading = false
     location = webView.url?.absoluteString ?? location
     title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Webページ"
+    updateNavigationState()
+    recordHistory()
   }
 
   func webView(
     _ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error
   ) {
     isLoading = false
+    updateNavigationState()
   }
 
   func webView(
     _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error
   ) {
     isLoading = false
+    updateNavigationState()
   }
 
   func captureCurrentPage() async throws -> WebResearchSource {
@@ -7676,6 +7756,34 @@ private final class WebResearchBrowserModel: NSObject, ObservableObject, WKNavig
       // selected page well below that boundary even for multibyte text.
       title: pageTitle, url: url.absoluteString,
       text: String(decoding: text.utf8.prefix(4_000), as: UTF8.self))
+  }
+
+  private func updateNavigationState() {
+    canGoBack = webView.canGoBack
+    canGoForward = webView.canGoForward
+  }
+
+  private func recordHistory() {
+    guard let url = webView.url?.absoluteString,
+      ["http", "https"].contains(webView.url?.scheme?.lowercased() ?? "")
+    else { return }
+    history.removeAll { $0.url == url }
+    history.insert(
+      WebResearchBrowserHistoryEntry(id: UUID(), title: title, url: url, visitedAt: Date()), at: 0)
+    history = Array(history.prefix(Self.maximumHistoryEntries))
+    save(history, key: Self.historyDefaultsKey)
+  }
+
+  private static func load<Value: Decodable>(_ type: Value.Type, key: String) -> [Value] {
+    guard let data = UserDefaults.standard.data(forKey: key),
+      let values = try? JSONDecoder().decode([Value].self, from: data)
+    else { return [] }
+    return values
+  }
+
+  private func save<Value: Encodable>(_ values: [Value], key: String) {
+    guard let data = try? JSONEncoder().encode(values) else { return }
+    UserDefaults.standard.set(data, forKey: key)
   }
 }
 
@@ -7711,6 +7819,8 @@ private struct WebResearchView: View {
   @State private var tavilyKeychainMessage: String?
   @State private var searXNGDiagnostic: WebResearchDiagnostic?
   @State private var tavilyDiagnostic: WebResearchDiagnostic?
+  @State private var showingBookmarks = false
+  @State private var showingHistory = false
   private let secretStore = KeychainSecretStore()
 
   var body: some View {
@@ -7728,9 +7838,15 @@ private struct WebResearchView: View {
         if browser.isLoading || searching { ProgressView().controlSize(.small) }
       }
 
-      DisclosureGroup("SearXNGローカル連携") {
+      HStack(spacing: 16) {
         Toggle("SearXNGを検索に使う", isOn: $searXNGEnabled)
           .onChange(of: searXNGEnabled) { _, enabled in if enabled { tavilyEnabled = false } }
+        Toggle("Tavilyを検索に使う", isOn: $tavilyEnabled)
+          .onChange(of: tavilyEnabled) { _, enabled in if enabled { searXNGEnabled = false } }
+      }
+      .font(.caption)
+
+      DisclosureGroup("SearXNGローカル連携") {
         HStack(spacing: 6) {
           TextField("SearXNG URL", text: $searXNGBaseURL)
             .textFieldStyle(.roundedBorder)
@@ -7747,8 +7863,6 @@ private struct WebResearchView: View {
       .font(.caption)
 
       DisclosureGroup("Tavily連携") {
-        Toggle("Tavilyを検索に使う", isOn: $tavilyEnabled)
-          .onChange(of: tavilyEnabled) { _, enabled in if enabled { searXNGEnabled = false } }
         HStack(spacing: 6) {
           SecureField("Tavily API key（Keychain）", text: $tavilyAPIKey)
             .textFieldStyle(.roundedBorder)
@@ -7808,9 +7922,16 @@ private struct WebResearchView: View {
         }
       }
 
-      WebResearchBrowser(model: browser)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
+      browserNavigationBar
+
+      ZStack {
+        WebResearchBrowser(model: browser)
+        if browser.location.isEmpty {
+          browserHome
+        }
+      }
+      .clipShape(RoundedRectangle(cornerRadius: 8))
+      .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
 
       if let errorMessage {
         Text(errorMessage).font(.caption).foregroundStyle(.red).textSelection(.enabled)
@@ -7854,7 +7975,7 @@ private struct WebResearchView: View {
             }
           }
         }
-        .disabled(capturing)
+        .disabled(capturing || browser.location.isEmpty)
         Button("閉じる") { dismiss() }
       }
     }
@@ -7863,6 +7984,105 @@ private struct WebResearchView: View {
       if address.isEmpty { address = browser.location }
       loadTavilyAPIKey()
     }
+    .sheet(isPresented: $showingBookmarks) {
+      WebResearchBookmarksView(
+        bookmarks: browser.bookmarks,
+        open: { bookmark in
+          address = bookmark.url
+          browser.load(address: bookmark.url)
+          showingBookmarks = false
+        },
+        remove: browser.removeBookmark)
+    }
+    .sheet(isPresented: $showingHistory) {
+      WebResearchHistoryView(
+        history: browser.history,
+        open: { entry in
+          address = entry.url
+          browser.load(address: entry.url)
+          showingHistory = false
+        },
+        remove: browser.removeHistoryEntry,
+        clear: browser.clearHistory)
+    }
+  }
+
+  private var browserNavigationBar: some View {
+    HStack(spacing: 6) {
+      Button("ホーム", systemImage: "house") { browser.goHome() }
+        .labelStyle(.iconOnly)
+        .help("ホーム")
+      Button("戻る", systemImage: "chevron.backward") { browser.goBack() }
+        .labelStyle(.iconOnly)
+        .help("戻る")
+        .disabled(!browser.canGoBack)
+      Button("進む", systemImage: "chevron.forward") { browser.goForward() }
+        .labelStyle(.iconOnly)
+        .help("進む")
+        .disabled(!browser.canGoForward)
+      Divider().frame(height: 16)
+      Button(browser.isCurrentPageBookmarked ? "ブックマークから削除" : "ブックマークに追加",
+        systemImage: browser.isCurrentPageBookmarked ? "bookmark.fill" : "bookmark") {
+        browser.toggleBookmark()
+      }
+      .labelStyle(.iconOnly)
+      .help(browser.isCurrentPageBookmarked ? "ブックマークから削除" : "ブックマークに追加")
+      .disabled(browser.location.isEmpty)
+      Button("ブックマーク", systemImage: "book") { showingBookmarks = true }
+        .labelStyle(.iconOnly)
+        .help("ブックマーク")
+      Button("履歴", systemImage: "clock") { showingHistory = true }
+        .labelStyle(.iconOnly)
+        .help("履歴")
+      Spacer()
+      Text(browser.title).font(.caption).lineLimit(1)
+    }
+    .buttonStyle(.borderless)
+  }
+
+  private var browserHome: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 14) {
+        HStack {
+          Image(systemName: "house")
+          Text("ホーム").font(.headline)
+        }
+        Text("URLまたは検索語を入力して、Webページを開けます。")
+          .font(.caption).foregroundStyle(.secondary)
+        if !browser.bookmarks.isEmpty {
+          Text("ブックマーク").font(.caption.bold())
+          ForEach(browser.bookmarks.prefix(5)) { bookmark in
+            browserHomeLink(title: bookmark.title, url: bookmark.url) {
+              address = bookmark.url
+              browser.load(address: bookmark.url)
+            }
+          }
+        }
+        if !browser.history.isEmpty {
+          Text("最近の履歴").font(.caption.bold())
+          ForEach(browser.history.prefix(5)) { entry in
+            browserHomeLink(title: entry.title, url: entry.url) {
+              address = entry.url
+              browser.load(address: entry.url)
+            }
+          }
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(20)
+    }
+    .background(.regularMaterial)
+  }
+
+  private func browserHomeLink(title: String, url: String, open: @escaping () -> Void) -> some View {
+    Button(action: open) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title).lineLimit(1)
+        Text(url).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .buttonStyle(.plain)
   }
 
   private func openAddress() {
@@ -8022,6 +8242,93 @@ private struct WebResearchView: View {
     } catch {
       tavilyKeychainMessage = error.localizedDescription
     }
+  }
+}
+
+private struct WebResearchBookmarksView: View {
+  let bookmarks: [WebResearchBrowserBookmark]
+  let open: (WebResearchBrowserBookmark) -> Void
+  let remove: (WebResearchBrowserBookmark) -> Void
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      SheetTitleBar(title: "ブックマーク")
+      if bookmarks.isEmpty {
+        ContentUnavailableView("ブックマークはありません。", systemImage: "bookmark")
+      } else {
+        List(bookmarks) { bookmark in
+          HStack(spacing: 8) {
+            Button {
+              open(bookmark)
+            } label: {
+              VStack(alignment: .leading, spacing: 2) {
+                Text(bookmark.title).lineLimit(1)
+                Text(bookmark.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            Button("削除", systemImage: "trash") { remove(bookmark) }
+              .labelStyle(.iconOnly)
+              .buttonStyle(.borderless)
+              .help("削除")
+          }
+        }
+        .listStyle(.inset)
+      }
+      HStack {
+        Spacer()
+        Button("閉じる") { dismiss() }
+      }
+    }
+    .padding(16)
+    .frame(minWidth: 440, minHeight: 320)
+  }
+}
+
+private struct WebResearchHistoryView: View {
+  let history: [WebResearchBrowserHistoryEntry]
+  let open: (WebResearchBrowserHistoryEntry) -> Void
+  let remove: (WebResearchBrowserHistoryEntry) -> Void
+  let clear: () -> Void
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      SheetTitleBar(title: "履歴")
+      if history.isEmpty {
+        ContentUnavailableView("履歴はありません。", systemImage: "clock")
+      } else {
+        List(history) { entry in
+          HStack(spacing: 8) {
+            Button {
+              open(entry)
+            } label: {
+              VStack(alignment: .leading, spacing: 2) {
+                Text(entry.title).lineLimit(1)
+                Text(entry.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            Button("削除", systemImage: "trash") { remove(entry) }
+              .labelStyle(.iconOnly)
+              .buttonStyle(.borderless)
+              .help("削除")
+          }
+        }
+        .listStyle(.inset)
+      }
+      HStack {
+        Button("履歴を消去", systemImage: "trash") { clear() }
+          .disabled(history.isEmpty)
+        Spacer()
+        Button("閉じる") { dismiss() }
+      }
+    }
+    .padding(16)
+    .frame(minWidth: 440, minHeight: 320)
   }
 }
 

@@ -294,3 +294,16 @@
 "Tavily API keyをKeychainへ保存しました。" = "Saved the Tavily API key to Keychain.";
 "Tavily API keyをKeychainから削除しました。" = "Deleted the Tavily API key from Keychain.";
 "接続確認" = "Test connection";
+"ホーム" = "Home";
+"戻る" = "Back";
+"進む" = "Forward";
+"ブックマーク" = "Bookmarks";
+"ブックマークに追加" = "Add bookmark";
+"ブックマークから削除" = "Remove bookmark";
+"ブックマークはありません。" = "No bookmarks yet.";
+"履歴" = "History";
+"最近の履歴" = "Recent history";
+"履歴はありません。" = "No browsing history yet.";
+"履歴を消去" = "Clear history";
+"URLまたは検索語を入力して、Webページを開けます。" = "Enter a URL or search query to open a web page.";
+"削除" = "Delete";
