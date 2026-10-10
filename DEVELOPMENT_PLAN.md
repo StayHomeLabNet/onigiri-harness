@@ -258,6 +258,19 @@ Jev専用ではなく、複数のJevライクな意思決定モデルを差し�
 - local decision → LLM／人のfallbackをシミュレーションできる
 - 自動実行前に判断根拠と適用policyを監査できる
 
+### Sub-phase 3.3 — Decision Model Comparison & Presets
+
+状態: 完了
+
+日常的な意思決定入力を名前付きプリセットとして保存・再利用できるようにしました。複数モデルを選ぶと、同じ状態と質問を順番に実行し、応答・確信度・確率・遅延を既存の履歴で比較できます。比較は外部操作を伴わない観察専用です。
+
+完了条件:
+
+- 状態と質問を入力プリセットとして保存・再適用できる
+- 同一条件を複数モデルへ実行できる
+- 各モデルの結果を通常の実験履歴で追跡できる
+- 比較実行が外部操作を自動実行しない
+
 ## Parent Phase 4 — Local AI Gateway
 
 ### Sub-phase 4.1 — Compatibility API
@@ -341,6 +354,7 @@ GitHubでApache-2.0のソースコードを公開し、第三者がclone、テ�
 - Sub-phase 5.2c — Signed macOS Distribution（任意・保留）: Developer ID署名、Hardened Runtime、公証、staple、ZIP、Gatekeeper検証の自動化は実装済み。Apple Developer Programへ加入する場合だけ実行する
 - Sub-phase 5.2d — GitHub Source Publication（完了）: 公開前検査とCIに合格後、`StayHomeLabNet/onigiri-harness`をPublicへ変更。Private vulnerability reporting、README・ライセンス・貢献導線、認証なしのfresh cloneを確認済み。GitHub Releaseを作る場合は当面ソースアーカイブだけを扱う
 - Sub-phase 5.2e — Public Launch Verification: 公開リポジトリからのclone、ビルド、インストール、初回会話、RAG、更新・ロールバック手順を第三者視点で確認
+- Sub-phase 5.2s — Detached Web Research Window（完了）: Webリサーチを別ウインドウで開き、チャットを中断せずに閲覧・検索・ブックマークできるようにする。選択したWebページはメインウインドウの次の質問へ共有する
 
 Sub-phase 5.2eの公開前UI確認では、資料全消去後の会話コンテキストを分離し、資料0件時の所持確認へ決定的に回答する処理を追加しました。日本語IMEの変換確定Enterと送信Enterを分離し、Shift+Enter改行も維持しています。メニューバーの設定画面から日本語／英語を即時切替できるローカライズ基盤と、配布アプリへの言語リソース同梱も追加しました。
 
