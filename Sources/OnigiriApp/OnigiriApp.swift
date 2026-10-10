@@ -52,6 +52,12 @@ struct OnigiriApp: App {
     }
       .defaultSize(width: 980, height: 640)
 
+    Window("Web Research", id: "web-research") {
+      DetachedWebResearchWindow()
+        .environment(\.locale, language.locale)
+    }
+      .defaultSize(width: 1_080, height: 760)
+
     Settings {
       OnigiriSettingsView()
         .environment(\.locale, language.locale)
@@ -788,6 +794,7 @@ private func copyToPasteboard(_ text: String) {
 
 struct ChatView: View {
   @Environment(\.locale) private var locale
+  @Environment(\.openWindow) private var openWindow
   @State private var conversations: [StoredConversation] = [.empty]
   @State private var selectedConversationID: UUID?
   @State private var draft = "こんにちは"
@@ -825,7 +832,7 @@ struct ChatView: View {
   @State private var selectedCitation: KnowledgeChunkMatch?
   @State private var showingKnowledgeImporter = false
   @State private var showingWebResearch = false
-  @State private var queuedWebResearchSources: [WebResearchSource] = []
+  @StateObject private var webResearchQueue = WebResearchQueue.shared
   @State private var showingKnowledgeDocuments = false
   @State private var showingSearchSettings = false
   @State private var showingChunkingSettings = false
@@ -930,7 +937,7 @@ struct ChatView: View {
     }
     .onChange(of: selectedConversationID) { _, _ in
       queuedKnowledgeMatches = []
-      queuedWebResearchSources = []
+      webResearchQueue.sources = []
       activateProfileForSelectedConversation()
     }
     .fileImporter(
@@ -954,7 +961,7 @@ struct ChatView: View {
       .frame(minWidth: 820, minHeight: 620, alignment: .topLeading)
     }
     .sheet(isPresented: $showingWebResearch) {
-      WebResearchView(sources: $queuedWebResearchSources)
+      WebResearchView(sources: $webResearchQueue.sources)
         .environment(\.locale, (AppLanguage(rawValue: uiLanguageCode) ?? .japanese).locale)
         .frame(minWidth: 900, minHeight: 650, alignment: .topLeading)
     }
@@ -1263,12 +1270,12 @@ struct ChatView: View {
         }
       }
 
-      if !queuedWebResearchSources.isEmpty {
+      if !webResearchQueue.sources.isEmpty {
         HStack {
           Text(webResearchQueueLabel)
             .font(.caption)
           Spacer()
-          Button("Web資料を解除") { queuedWebResearchSources = [] }
+          Button("Web資料を解除") { webResearchQueue.sources = [] }
             .font(.caption)
             .disabled(busy)
         }
@@ -1310,9 +1317,9 @@ struct ChatView: View {
 
   private var webResearchQueueLabel: String {
     if locale.identifier.lowercased().hasPrefix("ja") {
-      return "次の質問にWebページ \(queuedWebResearchSources.count)件を使用"
+      return "次の質問にWebページ \(webResearchQueue.sources.count)件を使用"
     }
-    return "Using \(queuedWebResearchSources.count) web page(s) for the next question"
+    return "Using \(webResearchQueue.sources.count) web page(s) for the next question"
   }
 
   private var conversationSidebar: some View {
@@ -2767,8 +2774,15 @@ struct ChatView: View {
         }
         .disabled(busy || knowledgeStatus.chunkCount == 0)
 
-        Button("Webリサーチ", systemImage: "safari") {
-          showingWebResearch = true
+        Menu {
+          Button("このウインドウで開く", systemImage: "rectangle.on.rectangle") {
+            showingWebResearch = true
+          }
+          Button("別ウインドウで開く", systemImage: "macwindow") {
+            openWindow(id: "web-research")
+          }
+        } label: {
+          Label("Webリサーチ", systemImage: "safari")
         }
         .disabled(busy)
 
@@ -3497,7 +3511,7 @@ struct ChatView: View {
       let input = try Harness.validatedMessage(draft)
       draft = ""
       let selectedMatches = selectedRAGMode == .disabled ? [] : queuedKnowledgeMatches
-      var selectedWebSources = queuedWebResearchSources
+      var selectedWebSources = webResearchQueue.sources
       if selectedWebSources.isEmpty,
         tavilyWebResearchEnabled,
         !ContextBuilder.isFollowUpTransformRequest(input),
@@ -3553,7 +3567,7 @@ struct ChatView: View {
             conversationID: activeConversationID, messageID: responseID, ragTrace: trace)
         case .done:
           if !selectedMatches.isEmpty { queuedKnowledgeMatches = [] }
-          if !selectedWebSources.isEmpty { queuedWebResearchSources = [] }
+          if !selectedWebSources.isEmpty { webResearchQueue.sources = [] }
         case .error:
           throw StreamError(message: event.content)
         }
@@ -3944,6 +3958,33 @@ private struct DecisionQuestionDraft: Identifiable {
     criteria: "proceed: Continue with the action\nescalate: Ask a stronger model or a human\nstop: Do not continue")
 }
 
+private struct DecisionExperimentPreset: Codable, Identifiable {
+  struct Question: Codable, Identifiable {
+    var id: UUID
+    var key: String
+    var type: DecisionQuestionType
+    var instructions: String
+    var criteria: String
+
+    init(_ draft: DecisionQuestionDraft) {
+      id = draft.id
+      key = draft.key
+      type = draft.type
+      instructions = draft.instructions
+      criteria = draft.criteria
+    }
+
+    var draft: DecisionQuestionDraft {
+      DecisionQuestionDraft(key: key, type: type, instructions: instructions, criteria: criteria)
+    }
+  }
+
+  var id: UUID
+  var name: String
+  var stateText: String
+  var questions: [Question]
+}
+
 private struct DecisionLabView: View {
   let models: [DecisionModelSummary]
   let runs: [DecisionExperimentRecord]
@@ -3962,13 +4003,18 @@ private struct DecisionLabView: View {
   @AppStorage("onigiri.decisionModel") private var selectedModel = ""
   @State private var stateText = ""
   @State private var questions: [DecisionQuestionDraft] = [.initial]
+  @State private var presets: [DecisionExperimentPreset] = Self.loadPresets()
+  @State private var presetName = ""
+  @State private var comparisonModels: Set<String> = []
   @State private var selectedRunID: UUID?
   @State private var loadingModels = false
   @State private var running = false
+  @State private var comparing = false
   @State private var localError: String?
   @State private var showingEvaluation = false
   @State private var keychainMessage: String?
   private let secretStore = KeychainSecretStore()
+  private static let presetsDefaultsKey = "onigiri.decisionLab.presets"
 
   private var providerConfig: DecisionProviderConfig {
     DecisionProviderConfig(
@@ -4132,6 +4178,42 @@ private struct DecisionLabView: View {
             .frame(width: 240)
           }
         }
+      HStack(spacing: 6) {
+        Menu("プリセット") {
+          if presets.isEmpty {
+            Text("保存済みプリセットはありません")
+          } else {
+            ForEach(presets) { preset in
+              Button(preset.name) { applyPreset(preset) }
+            }
+          }
+        }
+        TextField("プリセット名", text: $presetName)
+          .textFieldStyle(.roundedBorder)
+        Button("保存", systemImage: "square.and.arrow.down") { savePreset() }
+          .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      }
+      if models.count > 1 {
+        DisclosureGroup("モデル比較") {
+          VStack(alignment: .leading, spacing: 6) {
+            Text("同じ状態と質問を、選択したモデルへ順番に送信します。結果は履歴で比較できます。")
+              .font(.caption).foregroundStyle(.secondary)
+            ForEach(models) { model in
+              Toggle(model.name, isOn: Binding(
+                get: { comparisonModels.contains(model.name) },
+                set: { enabled in
+                  if enabled { comparisonModels.insert(model.name) }
+                  else { comparisonModels.remove(model.name) }
+                }))
+            }
+            Button("選択モデルを比較実行", systemImage: "arrow.left.arrow.right") {
+              Task { await executeComparison() }
+            }
+            .disabled(comparing || comparisonModels.count < 2 || stateText.isEmpty || questions.isEmpty)
+          }
+          .padding(.top, 4)
+        }
+      }
         Text("状態（テキスト、またはJSON）").font(.caption).foregroundStyle(.secondary)
         TextEditor(text: $stateText)
           .frame(minHeight: 120)
@@ -4184,7 +4266,7 @@ private struct DecisionLabView: View {
           Spacer()
           Button("実行", systemImage: "play.fill") { Task { await execute() } }
             .buttonStyle(.borderedProminent)
-            .disabled(running || selectedModel.isEmpty || stateText.isEmpty || questions.isEmpty)
+            .disabled(running || comparing || selectedModel.isEmpty || stateText.isEmpty || questions.isEmpty)
         }
       }
       .padding(.trailing, 14)
@@ -4249,44 +4331,87 @@ private struct DecisionLabView: View {
     running = true
     defer { running = false }
     do {
-      let state: JSONValue
-      if let data = stateText.data(using: .utf8),
-        let parsed = try? JSONDecoder().decode(JSONValue.self, from: data)
-      { state = parsed } else { state = .string(stateText) }
-      var mapped: [String: DecisionQuestion] = [:]
-      for draft in questions {
-        let key = draft.key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty, mapped[key] == nil else {
-          throw StreamError(message: "質問IDは空欄や重複にできません。")
-        }
-        let lines = draft.criteria.split(whereSeparator: \.isNewline).map(String.init)
-          .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let criteria: JSONValue?
-        switch draft.type {
-        case .choice:
-          var choices: [String: JSONValue] = [:]
-          for line in lines {
-            let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
-            choices[parts[0].trimmingCharacters(in: .whitespaces)] =
-              .string(parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : parts[0])
-          }
-          criteria = .object(choices)
-        case .score: criteria = .array(lines.map(JSONValue.string))
-        case .noul: criteria = nil
-        }
-        mapped[key] = DecisionQuestion(
-          type: draft.type,
-          instructions: draft.instructions.isEmpty ? nil : .string(draft.instructions),
-          criteria: criteria)
-      }
-      let result = await run(
-        DecisionExperimentRequest(
-          provider: providerConfig, model: selectedModel, state: state, questions: mapped))
+      let result = await run(try makeRequest(model: selectedModel))
       localError = result?.error
       selectedRunID = result?.id
     } catch {
       localError = error.localizedDescription
     }
+  }
+
+  @MainActor private func executeComparison() async {
+    comparing = true
+    defer { comparing = false }
+    do {
+      var lastRecord: DecisionExperimentRecord?
+      for model in comparisonModels.sorted() {
+        lastRecord = await run(try makeRequest(model: model))
+      }
+      localError = lastRecord?.error
+      selectedRunID = lastRecord?.id
+    } catch {
+      localError = error.localizedDescription
+    }
+  }
+
+  private func makeRequest(model: String) throws -> DecisionExperimentRequest {
+    let state: JSONValue
+    if let data = stateText.data(using: .utf8),
+      let parsed = try? JSONDecoder().decode(JSONValue.self, from: data)
+    { state = parsed } else { state = .string(stateText) }
+    var mapped: [String: DecisionQuestion] = [:]
+    for draft in questions {
+      let key = draft.key.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !key.isEmpty, mapped[key] == nil else {
+        throw StreamError(message: "質問IDは空欄や重複にできません。")
+      }
+      let lines = draft.criteria.split(whereSeparator: \.isNewline).map(String.init)
+        .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+      let criteria: JSONValue?
+      switch draft.type {
+      case .choice:
+        var choices: [String: JSONValue] = [:]
+        for line in lines {
+          let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
+          choices[parts[0].trimmingCharacters(in: .whitespaces)] =
+            .string(parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : parts[0])
+        }
+        criteria = .object(choices)
+      case .score: criteria = .array(lines.map(JSONValue.string))
+      case .noul: criteria = nil
+      }
+      mapped[key] = DecisionQuestion(
+        type: draft.type,
+        instructions: draft.instructions.isEmpty ? nil : .string(draft.instructions),
+        criteria: criteria)
+    }
+    return DecisionExperimentRequest(provider: providerConfig, model: model, state: state, questions: mapped)
+  }
+
+  private func applyPreset(_ preset: DecisionExperimentPreset) {
+    stateText = preset.stateText
+    questions = preset.questions.map(\.draft)
+    presetName = preset.name
+  }
+
+  private func savePreset() {
+    let name = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else { return }
+    let preset = DecisionExperimentPreset(
+      id: UUID(), name: name, stateText: stateText, questions: questions.map(DecisionExperimentPreset.Question.init))
+    presets.removeAll { $0.name == name }
+    presets.append(preset)
+    presets.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    guard let data = try? JSONEncoder().encode(presets) else { return }
+    UserDefaults.standard.set(data, forKey: Self.presetsDefaultsKey)
+    presetName = ""
+  }
+
+  private static func loadPresets() -> [DecisionExperimentPreset] {
+    guard let data = UserDefaults.standard.data(forKey: presetsDefaultsKey),
+      let presets = try? JSONDecoder().decode([DecisionExperimentPreset].self, from: data)
+    else { return [] }
+    return presets
   }
 
   private static func prettyJSON(_ value: JSONValue) -> String {
@@ -8093,9 +8218,26 @@ private struct WebSearchPreset: Identifiable, Codable, Equatable {
   ]
 }
 
+private final class WebResearchQueue: ObservableObject {
+  static let shared = WebResearchQueue()
+  @Published var sources: [WebResearchSource] = []
+
+  private init() {}
+}
+
+private struct DetachedWebResearchWindow: View {
+  @ObservedObject private var queue = WebResearchQueue.shared
+
+  var body: some View {
+    WebResearchView(sources: $queue.sources, isDetached: true)
+      .frame(minWidth: 900, minHeight: 650, alignment: .topLeading)
+  }
+}
+
 private struct WebResearchView: View {
   @Binding var sources: [WebResearchSource]
   @Environment(\.dismiss) private var dismiss
+  let isDetached: Bool
   @AppStorage("onigiri.searxng.enabled") private var searXNGEnabled = false
   @AppStorage("onigiri.searxng.baseURL") private var searXNGBaseURL = "http://127.0.0.1:8080"
   @AppStorage("onigiri.tavily.enabled") private var tavilyEnabled = false
@@ -8120,9 +8262,22 @@ private struct WebResearchView: View {
   private let secretStore = KeychainSecretStore()
   private static let searchPresetsDefaultsKey = "onigiri.webResearch.searchPresets"
 
+  init(sources: Binding<[WebResearchSource]>, isDetached: Bool = false) {
+    _sources = sources
+    self.isDetached = isDetached
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      SheetTitleBar(title: "Webリサーチ")
+      if isDetached {
+        HStack {
+          Text("Webリサーチ").font(.title2.bold())
+          Spacer()
+          Text("別ウインドウ").font(.caption).foregroundStyle(.secondary)
+        }
+      } else {
+        SheetTitleBar(title: "Webリサーチ")
+      }
       Text("ページを開き、「このページを会話に使う」を押すと、URL・取得日時・本文を次の質問だけに添付します。ページ本文は参考資料として扱われ、ページ内の指示は実行しません。")
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -8285,7 +8440,7 @@ private struct WebResearchView: View {
           }
         }
         .disabled(capturing || browser.location.isEmpty)
-        Button("閉じる") { dismiss() }
+        if !isDetached { Button("閉じる") { dismiss() } }
       }
     }
     .padding(16)

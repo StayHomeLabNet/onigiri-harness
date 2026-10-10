@@ -250,6 +250,8 @@ Parent Phase 3 / Sub-phase 3.1では、Jev専用計画をDecision Model Labへ�
 
 Parent Phase 3 / Sub-phase 3.2では、Decision Labの「評価」から複数モデルと正解付きケースを指定し、accuracy、calibration error、平均遅延、完了数、fallback率を比較できるようにしました。confidence閾値とfallback先は既定値に加え、モデル別・質問別にoverrideできます。低confidence時のLLM／人へのfallbackはレポート表示だけのシミュレーションです。評価レポートは`Application Support/OnigiriHarness/decision-evaluation-reports.json`へ最大100件保存し、通常の実験履歴とAPIキーは含めません。
 
+Parent Phase 3 / Sub-phase 3.3では、Decision Labに入力プリセットと比較実行を追加しました。状態と質問を名前付きで保存して再利用でき、複数のモデルを選択すると同一入力を順番に評価して実験履歴に並べます。比較実行も観察専用で、回答に応じた外部操作は行いません。
+
 `laya:multilingual`を使った日本語2分類ケースの実モデル確認では、2/2件が正解し、平均遅延1,168ms、calibration error 0.00535、confidence 0.7未満のfallback 0件を記録しました。初回推論は2,319ms、2件目は17msで、モデルのウォームアップを含む値です。
 
 Parent Phase 4 / Sub-phase 4.1では、OnigiriをOpenAI互換のローカルGatewayとして利用できるようにしました。Base URLは`http://127.0.0.1:18080/v1`です。`/v1/models`は現在モデルとProduct Profileを列挙し、`/v1/chat/completions`は非StreamingとSSE Streamingに対応します。Profile指定はモデルIDとして`profile/<UUID>`を使うか、`onigiri.profileID`／`onigiri.profileName`を指定します。RAGモード、引用、Agentic RAG traceはレスポンスの`onigiri`フィールドへ格納されます。
@@ -274,6 +276,8 @@ curl http://127.0.0.1:18080/v1/chat/completions \
 `onigiri`を省略すると既定のChat Runtimeを使います。`ragMode`は`disabled`、`always`、`agentic`です。Product Profileを使う場合は、そのProfileのProvider、モデル、システム指示、RAG設定、コンテキスト上限がリクエスト単位で適用されます。OpenAI互換APIは現時点でもloopback限定です。
 
 同梱OnigiriServerが終了している場合は、画面左上の「再確認」でサーバーを再起動して接続を回復します。アプリを再ビルドした場合は、以前のOnigiriを完全に終了してから新しい`.app`を開いてください。
+
+Parent Phase 5 / Sub-phase 5.2sでは、Webリサーチを独立したmacOSウインドウで開けるようにしました。上部の「Webリサーチ」メニューから「別ウインドウで開く」を選ぶと、チャットを表示したままページ閲覧・検索・ブックマークを続けられます。「このページを会話に使う」で選んだページは、メインウインドウの次の質問に同じように添付されます。
 
 今後は、大きな到達点を`Parent Phase`、実装単位を`Sub-phase`と表記します。現在は`Parent Phase 5 / Sub-phase 5.2 — GitHub Source Publication`です。
 
