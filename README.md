@@ -281,6 +281,8 @@ Parent Phase 5 / Sub-phase 5.2sでは、Webリサーチを独立したmacOSウ�
 
 Parent Phase 6 / Sub-phase 6.1では、回答の「根拠・再現」を追加しました。新しい回答には、質問、会話履歴、実行日時、Profile、Provider、モデル、RAG設定、引用、Agentic RAG traceを保存します。上部の「根拠・再現」から条件を確認し、別のProfileまたはRAGモードで同じ入力を独立再実行できます。比較結果は元の回答へ保存され、通常の会話や現在のProfileは変更しません。
 
+Parent Phase 6 / Sub-phase 6.2では、「根拠・再現」内にEvidence Regression Suitesを追加しました。回答を基準ケースとして保存し、比較するProfileとRAGモードを登録して一括実行できます。初回はベースラインを保存し、以後は回答、引用、検索判断、遅延の変化を前回実行と比較します。スイートと結果はこのMacだけに保存され、通常の会話へは追加されません。
+
 今後は、大きな到達点を`Parent Phase`、実装単位を`Sub-phase`と表記します。現在は`Parent Phase 5 / Sub-phase 5.2 — GitHub Source Publication`です。
 
 全体計画、各Parent Phase／Sub-phaseの完了条件、依存関係は [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) を参照してください。

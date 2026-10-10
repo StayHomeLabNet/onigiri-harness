@@ -389,6 +389,199 @@ private struct EvidenceSnapshot: Equatable, Codable {
   var replays: [CounterfactualReplay]
 }
 
+private struct EvidenceRegressionTarget: Identifiable, Equatable, Codable {
+  let id: UUID
+  let profileID: UUID?
+  let profileName: String
+  let ragMode: RAGMode
+
+  init(id: UUID = UUID(), profileID: UUID?, profileName: String, ragMode: RAGMode) {
+    self.id = id
+    self.profileID = profileID
+    self.profileName = profileName
+    self.ragMode = ragMode
+  }
+}
+
+private struct EvidenceRegressionCase: Identifiable, Equatable, Codable {
+  let id: UUID
+  let name: String
+  let evidence: EvidenceSnapshot
+
+  init(id: UUID = UUID(), name: String, evidence: EvidenceSnapshot) {
+    self.id = id
+    self.name = name
+    self.evidence = evidence
+  }
+}
+
+private struct EvidenceRegressionSuite: Identifiable, Equatable, Codable {
+  let id: UUID
+  var name: String
+  var cases: [EvidenceRegressionCase]
+  var targets: [EvidenceRegressionTarget]
+
+  init(id: UUID = UUID(), name: String, cases: [EvidenceRegressionCase] = [],
+    targets: [EvidenceRegressionTarget] = [])
+  {
+    self.id = id
+    self.name = name
+    self.cases = cases
+    self.targets = targets
+  }
+}
+
+private struct EvidenceRegressionReportEntry: Identifiable, Equatable, Codable {
+  let id: UUID
+  let caseID: UUID
+  let targetID: UUID
+  let replay: CounterfactualReplay
+}
+
+private struct EvidenceRegressionChange: Identifiable, Equatable, Codable {
+  let caseID: UUID
+  let targetID: UUID
+  let detail: String
+  var id: String { "\(caseID.uuidString)|\(targetID.uuidString)" }
+}
+
+private struct EvidenceRegressionReport: Identifiable, Equatable, Codable {
+  let id: UUID
+  let suiteID: UUID
+  let suiteName: String
+  let createdAt: Date
+  let entries: [EvidenceRegressionReportEntry]
+  let changes: [EvidenceRegressionChange]
+
+  var averageMilliseconds: Int {
+    guard !entries.isEmpty else { return 0 }
+    return Int(Double(entries.map(\.replay.elapsedMilliseconds).reduce(0, +)) / Double(entries.count))
+  }
+}
+
+@MainActor private final class EvidenceRegressionStore: ObservableObject {
+  static let shared = EvidenceRegressionStore()
+  @Published private(set) var suites: [EvidenceRegressionSuite]
+  @Published private(set) var reports: [EvidenceRegressionReport]
+  private let suitesKey = "onigiri.evidenceRegression.suites"
+  private let reportsKey = "onigiri.evidenceRegression.reports"
+
+  private init() {
+    suites = Self.load(EvidenceRegressionSuite.self, key: "onigiri.evidenceRegression.suites")
+    reports = Self.load(EvidenceRegressionReport.self, key: "onigiri.evidenceRegression.reports")
+  }
+
+  func createSuite(name: String) -> EvidenceRegressionSuite? {
+    let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else { return nil }
+    let suite = EvidenceRegressionSuite(name: name)
+    suites.insert(suite, at: 0)
+    persist()
+    return suite
+  }
+
+  func deleteSuite(_ suite: EvidenceRegressionSuite) {
+    suites.removeAll { $0.id == suite.id }
+    reports.removeAll { $0.suiteID == suite.id }
+    persist()
+  }
+
+  func addCase(_ evidence: EvidenceSnapshot, to suiteID: UUID) {
+    guard let index = suites.firstIndex(where: { $0.id == suiteID }) else { return }
+    let name = String(evidence.prompt.prefix(80))
+    guard !suites[index].cases.contains(where: { $0.evidence.prompt == evidence.prompt }) else { return }
+    suites[index].cases.append(EvidenceRegressionCase(name: name, evidence: evidence))
+    persist()
+  }
+
+  func removeCase(_ item: EvidenceRegressionCase, from suiteID: UUID) {
+    guard let index = suites.firstIndex(where: { $0.id == suiteID }) else { return }
+    suites[index].cases.removeAll { $0.id == item.id }
+    persist()
+  }
+
+  func addTarget(profileID: UUID?, profileName: String, ragMode: RAGMode, to suiteID: UUID) {
+    guard let index = suites.firstIndex(where: { $0.id == suiteID }) else { return }
+    guard !suites[index].targets.contains(where: {
+      $0.profileID == profileID && $0.ragMode == ragMode
+    }) else { return }
+    suites[index].targets.append(EvidenceRegressionTarget(
+      profileID: profileID, profileName: profileName, ragMode: ragMode))
+    persist()
+  }
+
+  func removeTarget(_ target: EvidenceRegressionTarget, from suiteID: UUID) {
+    guard let index = suites.firstIndex(where: { $0.id == suiteID }) else { return }
+    suites[index].targets.removeAll { $0.id == target.id }
+    persist()
+  }
+
+  func run(
+    suiteID: UUID,
+    execute: (EvidenceSnapshot, UUID?, RAGMode) async -> CounterfactualReplay?
+  ) async -> EvidenceRegressionReport? {
+    guard let suite = suites.first(where: { $0.id == suiteID }), !suite.cases.isEmpty,
+      !suite.targets.isEmpty
+    else { return nil }
+    var entries: [EvidenceRegressionReportEntry] = []
+    for item in suite.cases {
+      for target in suite.targets {
+        guard let replay = await execute(item.evidence, target.profileID, target.ragMode) else { continue }
+        entries.append(EvidenceRegressionReportEntry(
+          id: UUID(), caseID: item.id, targetID: target.id, replay: replay))
+      }
+    }
+    let previous = reports.first { $0.suiteID == suiteID }
+    let report = EvidenceRegressionReport(
+      id: UUID(), suiteID: suite.id, suiteName: suite.name, createdAt: Date(), entries: entries,
+      changes: Self.changes(entries: entries, comparedTo: previous))
+    reports.insert(report, at: 0)
+    reports = Array(reports.prefix(50))
+    persist()
+    return report
+  }
+
+  private func persist() {
+    if let data = try? JSONEncoder().encode(suites) { UserDefaults.standard.set(data, forKey: suitesKey) }
+    if let data = try? JSONEncoder().encode(reports) { UserDefaults.standard.set(data, forKey: reportsKey) }
+  }
+
+  private static func load<T: Decodable>(_ type: T.Type, key: String) -> [T] {
+    guard let data = UserDefaults.standard.data(forKey: key),
+      let value = try? JSONDecoder().decode([T].self, from: data)
+    else { return [] }
+    return value
+  }
+
+  private static func changes(
+    entries: [EvidenceRegressionReportEntry], comparedTo previous: EvidenceRegressionReport?
+  ) -> [EvidenceRegressionChange] {
+    guard let previous else { return [] }
+    return entries.compactMap { current in
+      guard let before = previous.entries.first(where: {
+        $0.caseID == current.caseID && $0.targetID == current.targetID
+      }) else { return nil }
+      var details: [String] = []
+      if normalized(current.replay.content) != normalized(before.replay.content) { details.append("回答が変化") }
+      if Set(current.replay.citationLabels) != Set(before.replay.citationLabels) { details.append("引用が変化") }
+      if current.replay.ragTrace?.decision != before.replay.ragTrace?.decision { details.append("検索判断が変化") }
+      if current.replay.elapsedMilliseconds > max(
+        before.replay.elapsedMilliseconds + 250,
+        Int(Double(before.replay.elapsedMilliseconds) * 1.2))
+      {
+        details.append("遅延 +\(current.replay.elapsedMilliseconds - before.replay.elapsedMilliseconds)ms")
+      }
+      guard !details.isEmpty else { return nil }
+      return EvidenceRegressionChange(caseID: current.caseID, targetID: current.targetID,
+        detail: details.joined(separator: " / "))
+    }
+  }
+
+  private static func normalized(_ value: String) -> String {
+    value.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+  }
+}
+
 private struct StoredConversation: Identifiable, Equatable, Codable {
   var id: UUID
   var title: String
@@ -1022,6 +1215,10 @@ struct ChatView: View {
         messages: messages, profiles: productProfiles,
         replay: { message, profileID, ragMode in
           await replayEvidence(for: message, targetProfileID: profileID, ragMode: ragMode)
+        },
+        runSnapshot: { evidence, profileID, ragMode in
+          await performEvidenceReplay(
+            evidence: evidence, targetProfileID: profileID, ragMode: ragMode)
         })
       .frame(minWidth: 980, minHeight: 680, alignment: .topLeading)
     }
@@ -3676,6 +3873,15 @@ struct ChatView: View {
     for message: DisplayMessage, targetProfileID: UUID?, ragMode: RAGMode
   ) async -> CounterfactualReplay? {
     guard let evidence = message.evidence else { return nil }
+    let replay = await performEvidenceReplay(
+      evidence: evidence, targetProfileID: targetProfileID, ragMode: ragMode)
+    if let replay { appendReplay(replay, to: message.id) }
+    return replay
+  }
+
+  @MainActor private func performEvidenceReplay(
+    evidence: EvidenceSnapshot, targetProfileID: UUID?, ragMode: RAGMode
+  ) async -> CounterfactualReplay? {
     let targetProfile = targetProfileID.flatMap { id in productProfiles.first { $0.id == id } }
     let model = targetProfile.map { "profile/\($0.id.uuidString.lowercased())" } ?? "onigiri/current"
     let instructions = targetProfile?.systemInstructions ?? evidence.runtime.systemInstructions
@@ -3714,7 +3920,6 @@ struct ChatView: View {
         citationLabels: decoded.onigiri.citations.map { "[\($0.index)] \($0.title) #\($0.chunkIndex)" },
         ragTrace: decoded.onigiri.ragTrace,
         elapsedMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000))
-      appendReplay(replay, to: message.id)
       return replay
     } catch {
       errorMessage = error.localizedDescription
@@ -4079,11 +4284,18 @@ private struct EvidenceReplayLabView: View {
   let messages: [DisplayMessage]
   let profiles: [ProductProfile]
   let replay: (DisplayMessage, UUID?, RAGMode) async -> CounterfactualReplay?
+  let runSnapshot: (EvidenceSnapshot, UUID?, RAGMode) async -> CounterfactualReplay?
   @Environment(\.dismiss) private var dismiss
+  @StateObject private var regressionStore = EvidenceRegressionStore.shared
   @State private var selectedMessageID: UUID?
   @State private var targetProfileID: UUID?
   @State private var targetRAGMode: RAGMode = .disabled
   @State private var running = false
+  @State private var selectedSuiteID: UUID?
+  @State private var newSuiteName = ""
+  @State private var suiteTargetProfileID: UUID?
+  @State private var suiteTargetRAGMode: RAGMode = .always
+  @State private var runningSuite = false
 
   private var evidenceMessages: [DisplayMessage] {
     messages.filter { $0.role == .assistant && $0.evidence != nil }
@@ -4092,6 +4304,11 @@ private struct EvidenceReplayLabView: View {
   private var selectedMessage: DisplayMessage? {
     let id = selectedMessageID ?? evidenceMessages.last?.id
     return evidenceMessages.first { $0.id == id }
+  }
+
+  private var selectedSuite: EvidenceRegressionSuite? {
+    let id = selectedSuiteID ?? regressionStore.suites.first?.id
+    return regressionStore.suites.first { $0.id == id }
   }
 
   var body: some View {
@@ -4129,6 +4346,7 @@ private struct EvidenceReplayLabView: View {
         targetProfileID = evidence.profileID
         targetRAGMode = evidence.runtime.ragMode
       }
+      selectedSuiteID = regressionStore.suites.first?.id
     }
     .onChange(of: selectedMessageID) { _, id in
       guard let evidence = evidenceMessages.first(where: { $0.id == id })?.evidence else { return }
@@ -4232,6 +4450,8 @@ private struct EvidenceReplayLabView: View {
               .frame(maxWidth: .infinity, alignment: .leading)
             }
           }
+
+          regressionSuiteControls(evidence)
         }
         .padding(.leading, 12)
       }
@@ -4244,6 +4464,111 @@ private struct EvidenceReplayLabView: View {
     HStack(alignment: .firstTextBaseline) {
       Text(label).font(.caption).foregroundStyle(.secondary).frame(width: 110, alignment: .leading)
       Text(value).textSelection(.enabled)
+    }
+  }
+
+  @ViewBuilder private func regressionSuiteControls(_ evidence: EvidenceSnapshot) -> some View {
+    GroupBox("Evidence Regression Suites") {
+      VStack(alignment: .leading, spacing: 10) {
+        Text("重要な質問を基準ケースに登録し、ProfileとRAGモードの組み合わせで一括再実行します。2回目以降は前回結果との差分を表示します。")
+          .font(.caption).foregroundStyle(.secondary)
+        HStack {
+          Picker("スイート", selection: $selectedSuiteID) {
+            ForEach(regressionStore.suites) { suite in Text(suite.name).tag(Optional(suite.id)) }
+          }
+          .frame(width: 220)
+          TextField("新しいスイート名", text: $newSuiteName).textFieldStyle(.roundedBorder)
+          Button("作成", systemImage: "plus") {
+            if let suite = regressionStore.createSuite(name: newSuiteName) {
+              selectedSuiteID = suite.id
+              newSuiteName = ""
+            }
+          }
+          .disabled(newSuiteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          if let suite = selectedSuite {
+            Button("削除", systemImage: "trash") {
+              regressionStore.deleteSuite(suite)
+              selectedSuiteID = regressionStore.suites.first?.id
+            }
+            .labelStyle(.iconOnly)
+            .help("スイートを削除")
+          }
+        }
+        if let suite = selectedSuite {
+          HStack {
+            Text("基準ケース \(suite.cases.count)件 / 比較条件 \(suite.targets.count)件")
+              .font(.caption.bold())
+            Spacer()
+            Button("この回答を基準ケースに追加", systemImage: "text.badge.plus") {
+              regressionStore.addCase(evidence, to: suite.id)
+            }
+          }
+          if !suite.cases.isEmpty {
+            ForEach(suite.cases) { item in
+              HStack {
+                Text(item.name).lineLimit(1).font(.caption)
+                Spacer()
+                Button("削除", systemImage: "xmark") {
+                  regressionStore.removeCase(item, from: suite.id)
+                }
+                .labelStyle(.iconOnly).buttonStyle(.borderless).help("基準ケースから削除")
+              }
+            }
+          }
+          Divider()
+          HStack {
+            Picker("Profile", selection: $suiteTargetProfileID) {
+              Text("現在の設定").tag(nil as UUID?)
+              ForEach(profiles) { profile in Text(profile.name).tag(Optional(profile.id)) }
+            }
+            Picker("RAG", selection: $suiteTargetRAGMode) {
+              ForEach(RAGMode.allCases, id: \.self) { mode in Text(mode.displayName).tag(mode) }
+            }
+            Button("比較条件を追加", systemImage: "plus") {
+              let profile = profiles.first { $0.id == suiteTargetProfileID }
+              regressionStore.addTarget(
+                profileID: suiteTargetProfileID, profileName: profile?.name ?? "Current settings",
+                ragMode: suiteTargetRAGMode, to: suite.id)
+            }
+          }
+          if !suite.targets.isEmpty {
+            ForEach(suite.targets) { target in
+              HStack {
+                Text("\(target.profileName) / \(target.ragMode.displayName)").font(.caption)
+                Spacer()
+                Button("削除", systemImage: "xmark") {
+                  regressionStore.removeTarget(target, from: suite.id)
+                }
+                .labelStyle(.iconOnly).buttonStyle(.borderless).help("比較条件から削除")
+              }
+            }
+          }
+          HStack {
+            Spacer()
+            Button("スイートを実行", systemImage: "play.fill") {
+              Task {
+                runningSuite = true
+                _ = await regressionStore.run(suiteID: suite.id, execute: runSnapshot)
+                runningSuite = false
+              }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(runningSuite || suite.cases.isEmpty || suite.targets.isEmpty)
+          }
+          if let report = regressionStore.reports.first(where: { $0.suiteID == suite.id }) {
+            Divider()
+            Text("直近: \(report.entries.count)実行 / 平均 \(report.averageMilliseconds)ms / 差分 \(report.changes.count)件")
+              .font(.caption.bold())
+            ForEach(report.changes) { change in
+              Text("• \(change.detail)").font(.caption).foregroundStyle(.orange)
+            }
+          }
+        } else {
+          Text("スイートを作成して、現在の回答を基準ケースに追加してください。")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 }
