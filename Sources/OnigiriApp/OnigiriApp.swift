@@ -345,11 +345,13 @@ private struct DisplayMessage: Identifiable, Equatable, Codable {
   var webSources: [WebResearchCitation]?
   var ragMode: RAGMode?
   var ragTrace: AgenticRAGTrace?
+  var evidence: EvidenceSnapshot?
 
   init(
     id: UUID = UUID(), role: Role, content: String, citations: [KnowledgeChunkMatch] = [],
     webSources: [WebResearchCitation] = [],
-    ragMode: RAGMode? = nil, ragTrace: AgenticRAGTrace? = nil
+    ragMode: RAGMode? = nil, ragTrace: AgenticRAGTrace? = nil,
+    evidence: EvidenceSnapshot? = nil
   ) {
     self.id = id
     self.role = role
@@ -358,7 +360,33 @@ private struct DisplayMessage: Identifiable, Equatable, Codable {
     self.webSources = webSources.isEmpty ? nil : webSources
     self.ragMode = ragMode
     self.ragTrace = ragTrace
+    self.evidence = evidence
   }
+}
+
+private struct CounterfactualReplay: Identifiable, Equatable, Codable {
+  let id: UUID
+  let replayedAt: Date
+  let profileID: UUID?
+  let profileName: String
+  let model: String
+  let ragMode: RAGMode
+  let content: String
+  let citationLabels: [String]
+  let ragTrace: AgenticRAGTrace?
+  let elapsedMilliseconds: Int
+}
+
+private struct EvidenceSnapshot: Equatable, Codable {
+  let recordedAt: Date
+  let prompt: String
+  let history: [ChatHistoryMessage]
+  let profileID: UUID?
+  let profileName: String
+  let providerID: String
+  let modelID: String
+  let runtime: ChatRuntimeOptions
+  var replays: [CounterfactualReplay]
 }
 
 private struct StoredConversation: Identifiable, Equatable, Codable {
@@ -845,6 +873,7 @@ struct ChatView: View {
   @State private var showingMCPAudit = false
   @State private var knowledgeToolAuditEntries: [KnowledgeToolAuditEntry] = []
   @State private var showingDecisionLab = false
+  @State private var showingEvidenceReplay = false
   @State private var showingDataManagement = false
   @State private var decisionModels: [DecisionModelSummary] = []
   @State private var decisionRuns: [DecisionExperimentRecord] = []
@@ -986,6 +1015,14 @@ struct ChatView: View {
         refreshEvaluations: { await loadDecisionEvaluations() },
         clearEvaluations: { await clearDecisionEvaluations() }
       )
+      .frame(minWidth: 980, minHeight: 680, alignment: .topLeading)
+    }
+    .sheet(isPresented: $showingEvidenceReplay) {
+      EvidenceReplayLabView(
+        messages: messages, profiles: productProfiles,
+        replay: { message, profileID, ragMode in
+          await replayEvidence(for: message, targetProfileID: profileID, ragMode: ragMode)
+        })
       .frame(minWidth: 980, minHeight: 680, alignment: .topLeading)
     }
     .sheet(isPresented: $showingDataManagement) {
@@ -2804,6 +2841,11 @@ struct ChatView: View {
         }
         .disabled(busy)
 
+        Button("根拠・再現", systemImage: "arrow.triangle.2.circlepath.doc.on.clipboard") {
+          showingEvidenceReplay = true
+        }
+        .disabled(messages.filter { $0.role == .assistant && $0.evidence != nil }.isEmpty)
+
         Button("データ管理", systemImage: "externaldrive.badge.timemachine") {
           showingDataManagement = true
         }
@@ -3526,13 +3568,24 @@ struct ChatView: View {
         : selectedRAGMode == .always && knowledgeStatus.chunkCount > 0
           && !ContextBuilder.isFollowUpTransformRequest(input)
         ? (try? await fetchKnowledgeMatches(query: input)) ?? [] : []
+      let sourceProfile = selectedProductProfileID.flatMap { id in
+        productProfiles.first { $0.id == id }
+      }
+      let evidence = EvidenceSnapshot(
+        recordedAt: Date(), prompt: input, history: chatHistoryMessages(in: activeConversationID),
+        profileID: sourceProfile?.id, profileName: sourceProfile?.name ?? "Current settings",
+        providerID: selectedProviderID, modelID: modelID,
+        runtime: ChatRuntimeOptions(
+          systemInstructions: systemInstructions, ragMode: selectedRAGMode,
+          searchSettings: currentSearchSettings, contextLimit: contextLimit),
+        replays: [])
       appendMessage(DisplayMessage(role: .user, content: input), to: activeConversationID)
       let responseID = UUID()
       appendMessage(
         DisplayMessage(
           id: responseID, role: .assistant, content: "", citations: citations,
           webSources: selectedWebSources.map(\.citation),
-          ragMode: selectedRAGMode),
+          ragMode: selectedRAGMode, evidence: evidence),
         to: activeConversationID)
 
       var request = URLRequest(url: OnigiriEndpoint.url("chat/stream"))
@@ -3619,6 +3672,66 @@ struct ChatView: View {
     }
   }
 
+  @MainActor private func replayEvidence(
+    for message: DisplayMessage, targetProfileID: UUID?, ragMode: RAGMode
+  ) async -> CounterfactualReplay? {
+    guard let evidence = message.evidence else { return nil }
+    let targetProfile = targetProfileID.flatMap { id in productProfiles.first { $0.id == id } }
+    let model = targetProfile.map { "profile/\($0.id.uuidString.lowercased())" } ?? "onigiri/current"
+    let instructions = targetProfile?.systemInstructions ?? evidence.runtime.systemInstructions
+    var replayMessages: [OpenAICompatibleMessage] = []
+    if !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      replayMessages.append(OpenAICompatibleMessage(role: .system, content: instructions))
+    }
+    replayMessages.append(contentsOf: evidence.history.map {
+      OpenAICompatibleMessage(
+        role: $0.role == .user ? .user : .assistant, content: $0.content)
+    })
+    replayMessages.append(OpenAICompatibleMessage(role: .user, content: evidence.prompt))
+
+    let startedAt = Date()
+    do {
+      var request = URLRequest(url: OnigiriEndpoint.url("v1/chat/completions"))
+      request.httpMethod = "POST"
+      request.timeoutInterval = 120
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      request.httpBody = try JSONEncoder().encode(OpenAIChatCompletionsRequest(
+        model: model, messages: replayMessages, stream: false,
+        onigiri: OpenAICompatibilityOptions(
+          profileID: targetProfileID, ragMode: ragMode,
+          searchSettings: targetProfile?.searchSettings ?? evidence.runtime.searchSettings,
+          contextLimit: targetProfile?.contextLimit ?? evidence.runtime.contextLimit)))
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        let apiError = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data)
+        throw StreamError(message: apiError?.error.message ?? "再実行に失敗しました。")
+      }
+      let decoded = try JSONDecoder().decode(OpenAIChatCompletionResponse.self, from: data)
+      let replay = CounterfactualReplay(
+        id: UUID(), replayedAt: Date(), profileID: targetProfileID,
+        profileName: targetProfile?.name ?? "Current settings", model: targetProfile?.modelID ?? decoded.model,
+        ragMode: ragMode, content: decoded.choices.first?.message.content ?? "",
+        citationLabels: decoded.onigiri.citations.map { "[\($0.index)] \($0.title) #\($0.chunkIndex)" },
+        ragTrace: decoded.onigiri.ragTrace,
+        elapsedMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000))
+      appendReplay(replay, to: message.id)
+      return replay
+    } catch {
+      errorMessage = error.localizedDescription
+      return nil
+    }
+  }
+
+  @MainActor private func appendReplay(_ replay: CounterfactualReplay, to messageID: UUID) {
+    guard let conversationIndex = conversations.firstIndex(where: { conversation in
+      conversation.messages.contains { $0.id == messageID }
+    }), let messageIndex = conversations[conversationIndex].messages.firstIndex(where: { $0.id == messageID })
+    else { return }
+    conversations[conversationIndex].messages[messageIndex].evidence?.replays.insert(replay, at: 0)
+    conversations[conversationIndex].updatedAt = Date()
+    saveConversations()
+  }
+
   @MainActor private func stopGeneration() async {
     guard let conversationID = sendingConversationID else { return }
     stopRequested = true
@@ -3661,6 +3774,23 @@ struct ChatView: View {
       guard !content.isEmpty else { return nil }
       let role: ChatHistoryMessage.Role = message.role == .user ? .user : .assistant
       return ChatHistoryMessage(role: role, content: content)
+    }
+  }
+
+  @MainActor private func chatHistoryMessages(in conversationID: UUID) -> [ChatHistoryMessage] {
+    guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return [] }
+    let messages: ArraySlice<DisplayMessage>
+    if let resetID = conversation.contextResetAfterMessageID,
+      let resetIndex = conversation.messages.firstIndex(where: { $0.id == resetID })
+    {
+      messages = conversation.messages.suffix(from: conversation.messages.index(after: resetIndex))
+    } else {
+      messages = conversation.messages[...]
+    }
+    return messages.compactMap { message in
+      let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !content.isEmpty else { return nil }
+      return ChatHistoryMessage(role: message.role == .user ? .user : .assistant, content: content)
     }
   }
 
@@ -3941,6 +4071,179 @@ private struct SheetTitleBar: View {
       .buttonStyle(.bordered)
       .keyboardShortcut(.cancelAction)
       .help("閉じる")
+    }
+  }
+}
+
+private struct EvidenceReplayLabView: View {
+  let messages: [DisplayMessage]
+  let profiles: [ProductProfile]
+  let replay: (DisplayMessage, UUID?, RAGMode) async -> CounterfactualReplay?
+  @Environment(\.dismiss) private var dismiss
+  @State private var selectedMessageID: UUID?
+  @State private var targetProfileID: UUID?
+  @State private var targetRAGMode: RAGMode = .disabled
+  @State private var running = false
+
+  private var evidenceMessages: [DisplayMessage] {
+    messages.filter { $0.role == .assistant && $0.evidence != nil }
+  }
+
+  private var selectedMessage: DisplayMessage? {
+    let id = selectedMessageID ?? evidenceMessages.last?.id
+    return evidenceMessages.first { $0.id == id }
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      SheetTitleBar(title: "根拠・再現")
+      Text("回答に使った条件を記録し、ProfileまたはRAGモードを変えた独立実行と比較します。再実行の結果は通常の会話には追加しません。")
+        .font(.caption).foregroundStyle(.secondary)
+      if evidenceMessages.isEmpty {
+        ContentUnavailableView("記録済みの回答はありません", systemImage: "doc.text.magnifyingglass")
+      } else {
+        HSplitView {
+          List(selection: $selectedMessageID) {
+            ForEach(evidenceMessages) { message in
+              VStack(alignment: .leading, spacing: 3) {
+                Text(message.content.isEmpty ? "生成中の回答" : message.content)
+                  .lineLimit(2)
+                if let evidence = message.evidence {
+                  Text(evidence.recordedAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+              }
+              .tag(Optional(message.id))
+            }
+          }
+          .frame(minWidth: 230, idealWidth: 280)
+          evidenceDetail
+            .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
+        }
+      }
+    }
+    .padding(20)
+    .onAppear {
+      selectedMessageID = evidenceMessages.last?.id
+      if let evidence = evidenceMessages.last?.evidence {
+        targetProfileID = evidence.profileID
+        targetRAGMode = evidence.runtime.ragMode
+      }
+    }
+    .onChange(of: selectedMessageID) { _, id in
+      guard let evidence = evidenceMessages.first(where: { $0.id == id })?.evidence else { return }
+      targetProfileID = evidence.profileID
+      targetRAGMode = evidence.runtime.ragMode
+    }
+  }
+
+  @ViewBuilder private var evidenceDetail: some View {
+    if let message = selectedMessage, let evidence = message.evidence {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 14) {
+          GroupBox("Flight Recorder") {
+            VStack(alignment: .leading, spacing: 6) {
+              evidenceRow("記録時刻", evidence.recordedAt.formatted(date: .abbreviated, time: .shortened))
+              evidenceRow("Profile", evidence.profileName)
+              evidenceRow("Provider", evidence.providerID)
+              evidenceRow("モデル", evidence.modelID.isEmpty ? "既定" : evidence.modelID)
+              evidenceRow("RAG", evidence.runtime.ragMode.displayName)
+              evidenceRow("コンテキスト上限", "\(evidence.runtime.contextLimit)")
+              evidenceRow("会話履歴", "\(evidence.history.count)件")
+              Text("質問").font(.caption.bold()).padding(.top, 4)
+              Text(evidence.prompt).textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+          }
+
+          if !message.citations.isEmpty || message.ragTrace != nil {
+            GroupBox("根拠") {
+              VStack(alignment: .leading, spacing: 6) {
+                ForEach(message.citations) { citation in
+                  Text("[\(citation.citationIndex)] \(citation.title) #\(citation.chunkIndex)")
+                    .font(.caption)
+                }
+                if let trace = message.ragTrace {
+                  Divider()
+                  Text(trace.reason).font(.caption)
+                  if !trace.queries.isEmpty {
+                    Text("検索語: \(trace.queries.joined(separator: " → "))").font(.caption)
+                  }
+                  Text("Tool \(trace.toolCallCount)回 / \(trace.elapsedMilliseconds)ms")
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
+          }
+
+          GroupBox("Counterfactual Replay") {
+            VStack(alignment: .leading, spacing: 10) {
+              Text("同じ質問と会話履歴を独立した実行として送ります。比較先のProfileは通常の会話設定を変更しません。")
+                .font(.caption).foregroundStyle(.secondary)
+              HStack {
+                Picker("比較Profile", selection: $targetProfileID) {
+                  Text("現在の設定").tag(nil as UUID?)
+                  ForEach(profiles) { profile in
+                    Text(profile.name).tag(Optional(profile.id))
+                  }
+                }
+                Picker("RAG", selection: $targetRAGMode) {
+                  ForEach(RAGMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
+                  }
+                }
+                Button("再実行", systemImage: "arrow.triangle.2.circlepath") {
+                  Task {
+                    running = true
+                    _ = await replay(message, targetProfileID, targetRAGMode)
+                    running = false
+                  }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(running)
+              }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+          }
+
+          if !evidence.replays.isEmpty {
+            GroupBox("再実行結果") {
+              VStack(alignment: .leading, spacing: 12) {
+                ForEach(evidence.replays) { item in
+                  VStack(alignment: .leading, spacing: 4) {
+                    Text("\(item.profileName) / \(item.model) / \(item.ragMode.displayName)")
+                      .font(.caption.bold())
+                    Text("\(item.elapsedMilliseconds)ms ・ \(item.replayedAt.formatted(date: .abbreviated, time: .shortened))")
+                      .font(.caption2).foregroundStyle(.secondary)
+                    Text(item.content).textSelection(.enabled)
+                    if !item.citationLabels.isEmpty {
+                      Text(item.citationLabels.joined(separator: " ・ "))
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let trace = item.ragTrace {
+                      Text("\(trace.reason) ・ Tool \(trace.toolCallCount)回")
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+                  }
+                  if item.id != evidence.replays.last?.id { Divider() }
+                }
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
+          }
+        }
+        .padding(.leading, 12)
+      }
+    } else {
+      ContentUnavailableView("回答を選択", systemImage: "list.bullet.rectangle")
+    }
+  }
+
+  private func evidenceRow(_ label: String, _ value: String) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+      Text(label).font(.caption).foregroundStyle(.secondary).frame(width: 110, alignment: .leading)
+      Text(value).textSelection(.enabled)
     }
   }
 }

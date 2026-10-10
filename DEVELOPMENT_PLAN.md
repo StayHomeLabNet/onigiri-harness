@@ -25,6 +25,7 @@
 | Parent Phase 3 — Decision Models & Experiments | 完了 | Decision Model Lab、比較評価、confidence routingを実装済み |
 | Parent Phase 4 — Local AI Gateway | 完了 | OpenAI Compatibility APIとCLI Chat Providersを実装済み |
 | Parent Phase 5 — Productization | 進行中 | 5.1系、5.2a、5.2b、5.2dを完了。次は公開後検証 |
+| Parent Phase 6 — Evidence & Replay | 進行中 | 回答条件の記録と反実仮想の比較実行を実装中 |
 
 次に着手するのは **Parent Phase 5 / Sub-phase 5.2e — Public Launch Verification** です。
 
@@ -368,6 +369,21 @@ Sub-phase 5.2eの公開前UI確認では、資料全消去後の会話コンテ�
 - CIがテスト、ビルド、秘密情報・不要ファイル検査に合格する
 - GitHubの公開ソースからローカル用アプリを再現できる
 - 公開履歴にAPIキー、個人資料、会話、ローカルパス、バックアップが含まれない
+
+## Parent Phase 6 — Evidence & Replay
+
+### Sub-phase 6.1 — Evidence & Replay Lab
+
+状態: 完了
+
+各回答へFlight Recorderを付与し、質問、直前の会話履歴、実行日時、Profile、Provider、モデル、RAG設定、コンテキスト上限、引用、Agentic RAGの検索判断を保存します。根拠・再現画面では、回答時の条件を確認し、比較先のProfileとRAGモードを指定して同じ入力をOpenAI互換Gateway経由で独立再実行できます。再実行結果、根拠、遅延は元の回答に保存され、通常の会話履歴や現在のProfileを変更しません。
+
+完了条件:
+
+- 回答ごとに実行条件と根拠を後から確認できる
+- 同じ質問と会話履歴を独立した実験として再実行できる
+- ProfileまたはRAGモードを変えた結果を保存・比較できる
+- 再実行が通常の会話や現在のProfileを変更しない
 
 ## 実装順序と依存関係
 
