@@ -283,6 +283,8 @@ Parent Phase 6 / Sub-phase 6.1では、回答の「根拠・再現」を追加�
 
 Parent Phase 6 / Sub-phase 6.2では、「根拠・再現」内にEvidence Regression Suitesを追加しました。回答を基準ケースとして保存し、比較するProfileとRAGモードを登録して一括実行できます。初回はベースラインを保存し、以後は回答、引用、検索判断、遅延の変化を前回実行と比較します。スイートと結果はこのMacだけに保存され、通常の会話へは追加されません。
 
+Parent Phase 6 / Sub-phase 6.3では、スイートごとの回帰ポリシーとMarkdown／CSVレポート書き出しを追加しました。回答本文の変化は情報として残し、引用消失、検索判断の変化、遅延超過を「失敗」「要確認」「情報」に分類できます。直近結果には合格・要確認・失敗・情報の集計を表示し、詳細をファイルへ保存できます。
+
 今後は、大きな到達点を`Parent Phase`、実装単位を`Sub-phase`と表記します。現在は`Parent Phase 5 / Sub-phase 5.2 — GitHub Source Publication`です。
 
 全体計画、各Parent Phase／Sub-phaseの完了条件、依存関係は [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) を参照してください。

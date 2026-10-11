@@ -415,19 +415,64 @@ private struct EvidenceRegressionCase: Identifiable, Equatable, Codable {
   }
 }
 
+private enum EvidenceRegressionStatus: String, Codable, CaseIterable, Identifiable {
+  case passed
+  case info
+  case review
+  case failed
+
+  var id: String { rawValue }
+  var title: String {
+    switch self {
+    case .passed: return "合格"
+    case .info: return "情報"
+    case .review: return "要確認"
+    case .failed: return "失敗"
+    }
+  }
+  var sortOrder: Int {
+    switch self {
+    case .passed: return 0
+    case .info: return 1
+    case .review: return 2
+    case .failed: return 3
+    }
+  }
+}
+
+private struct EvidenceRegressionPolicy: Equatable, Codable {
+  var citationDisappearedStatus: EvidenceRegressionStatus = .failed
+  var searchDecisionChangedStatus: EvidenceRegressionStatus = .review
+  var latencyExceededStatus: EvidenceRegressionStatus = .failed
+  var latencyIncreaseMilliseconds = 250
+  var latencyMultiplier = 1.2
+}
+
 private struct EvidenceRegressionSuite: Identifiable, Equatable, Codable {
   let id: UUID
   var name: String
   var cases: [EvidenceRegressionCase]
   var targets: [EvidenceRegressionTarget]
+  var policy: EvidenceRegressionPolicy
 
   init(id: UUID = UUID(), name: String, cases: [EvidenceRegressionCase] = [],
-    targets: [EvidenceRegressionTarget] = [])
+    targets: [EvidenceRegressionTarget] = [], policy: EvidenceRegressionPolicy = .init())
   {
     self.id = id
     self.name = name
     self.cases = cases
     self.targets = targets
+    self.policy = policy
+  }
+
+  private enum CodingKeys: String, CodingKey { case id, name, cases, targets, policy }
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    name = try container.decode(String.self, forKey: .name)
+    cases = try container.decode([EvidenceRegressionCase].self, forKey: .cases)
+    targets = try container.decode([EvidenceRegressionTarget].self, forKey: .targets)
+    policy = try container.decodeIfPresent(EvidenceRegressionPolicy.self, forKey: .policy) ?? .init()
   }
 }
 
@@ -441,6 +486,7 @@ private struct EvidenceRegressionReportEntry: Identifiable, Equatable, Codable {
 private struct EvidenceRegressionChange: Identifiable, Equatable, Codable {
   let caseID: UUID
   let targetID: UUID
+  let status: EvidenceRegressionStatus
   let detail: String
   var id: String { "\(caseID.uuidString)|\(targetID.uuidString)" }
 }
@@ -457,6 +503,10 @@ private struct EvidenceRegressionReport: Identifiable, Equatable, Codable {
     guard !entries.isEmpty else { return 0 }
     return Int(Double(entries.map(\.replay.elapsedMilliseconds).reduce(0, +)) / Double(entries.count))
   }
+  var failedCount: Int { changes.count(where: { $0.status == .failed }) }
+  var reviewCount: Int { changes.count(where: { $0.status == .review }) }
+  var informationCount: Int { changes.count(where: { $0.status == .info }) }
+  var passedCount: Int { max(0, entries.count - failedCount - reviewCount) }
 }
 
 @MainActor private final class EvidenceRegressionStore: ObservableObject {
@@ -516,6 +566,12 @@ private struct EvidenceRegressionReport: Identifiable, Equatable, Codable {
     persist()
   }
 
+  func updatePolicy(_ policy: EvidenceRegressionPolicy, for suiteID: UUID) {
+    guard let index = suites.firstIndex(where: { $0.id == suiteID }) else { return }
+    suites[index].policy = policy
+    persist()
+  }
+
   func run(
     suiteID: UUID,
     execute: (EvidenceSnapshot, UUID?, RAGMode) async -> CounterfactualReplay?
@@ -534,7 +590,7 @@ private struct EvidenceRegressionReport: Identifiable, Equatable, Codable {
     let previous = reports.first { $0.suiteID == suiteID }
     let report = EvidenceRegressionReport(
       id: UUID(), suiteID: suite.id, suiteName: suite.name, createdAt: Date(), entries: entries,
-      changes: Self.changes(entries: entries, comparedTo: previous))
+      changes: Self.changes(entries: entries, comparedTo: previous, policy: suite.policy))
     reports.insert(report, at: 0)
     reports = Array(reports.prefix(50))
     persist()
@@ -546,6 +602,67 @@ private struct EvidenceRegressionReport: Identifiable, Equatable, Codable {
     if let data = try? JSONEncoder().encode(reports) { UserDefaults.standard.set(data, forKey: reportsKey) }
   }
 
+  func markdown(for report: EvidenceRegressionReport) -> String {
+    let suite = suites.first { $0.id == report.suiteID }
+    var lines = [
+      "# Onigiri Harness Evidence Regression Report", "",
+      "- スイート: \(report.suiteName)",
+      "- 実行日時: \(ISO8601DateFormatter().string(from: report.createdAt))",
+      "- 実行数: \(report.entries.count)",
+      "- 合格 / 要確認 / 失敗: \(report.passedCount) / \(report.reviewCount) / \(report.failedCount)",
+      "- 情報: \(report.informationCount)", ""
+    ]
+    for entry in report.entries {
+      let item = suite?.cases.first { $0.id == entry.caseID }
+      let target = suite?.targets.first { $0.id == entry.targetID }
+      let change = report.changes.first { $0.caseID == entry.caseID && $0.targetID == entry.targetID }
+      lines.append("## \(change?.status.title ?? EvidenceRegressionStatus.passed.title) — \(item?.name ?? entry.caseID.uuidString)")
+      lines.append("")
+      lines.append("- 条件: \(target?.profileName ?? entry.replay.profileName) / \(entry.replay.ragMode.displayName)")
+      lines.append("- モデル: \(entry.replay.model)")
+      lines.append("- 遅延: \(entry.replay.elapsedMilliseconds)ms")
+      if let change { lines.append("- 差分: \(change.detail)") }
+      if !entry.replay.citationLabels.isEmpty {
+        lines.append("- 引用: \(entry.replay.citationLabels.joined(separator: " / "))")
+      }
+      if let trace = entry.replay.ragTrace {
+        lines.append("- 検索判断: \(trace.decision.rawValue)")
+      }
+      lines.append("")
+      lines.append("### 回答")
+      lines.append("")
+      lines.append(entry.replay.content)
+      lines.append("")
+    }
+    return lines.joined(separator: "\n")
+  }
+
+  func csv(for report: EvidenceRegressionReport) -> String {
+    let suite = suites.first { $0.id == report.suiteID }
+    var rows = [[
+      "suite", "created_at", "case", "profile", "model", "rag_mode", "status", "change",
+      "latency_ms", "citations", "search_decision", "answer"
+    ]]
+    rows += report.entries.map { entry in
+      let item = suite?.cases.first { $0.id == entry.caseID }
+      let target = suite?.targets.first { $0.id == entry.targetID }
+      let change = report.changes.first { $0.caseID == entry.caseID && $0.targetID == entry.targetID }
+      return [
+        report.suiteName, ISO8601DateFormatter().string(from: report.createdAt),
+        item?.name ?? entry.caseID.uuidString, target?.profileName ?? entry.replay.profileName,
+        entry.replay.model, entry.replay.ragMode.rawValue, change?.status.title ?? "合格",
+        change?.detail ?? "", String(entry.replay.elapsedMilliseconds),
+        entry.replay.citationLabels.joined(separator: " | "),
+        entry.replay.ragTrace?.decision.rawValue ?? "", entry.replay.content
+      ]
+    }
+    return rows.map { $0.map(Self.csvField).joined(separator: ",") }.joined(separator: "\n")
+  }
+
+  private static func csvField(_ value: String) -> String {
+    "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+  }
+
   private static func load<T: Decodable>(_ type: T.Type, key: String) -> [T] {
     guard let data = UserDefaults.standard.data(forKey: key),
       let value = try? JSONDecoder().decode([T].self, from: data)
@@ -554,26 +671,38 @@ private struct EvidenceRegressionReport: Identifiable, Equatable, Codable {
   }
 
   private static func changes(
-    entries: [EvidenceRegressionReportEntry], comparedTo previous: EvidenceRegressionReport?
+    entries: [EvidenceRegressionReportEntry], comparedTo previous: EvidenceRegressionReport?,
+    policy: EvidenceRegressionPolicy
   ) -> [EvidenceRegressionChange] {
     guard let previous else { return [] }
     return entries.compactMap { current in
       guard let before = previous.entries.first(where: {
         $0.caseID == current.caseID && $0.targetID == current.targetID
       }) else { return nil }
-      var details: [String] = []
-      if normalized(current.replay.content) != normalized(before.replay.content) { details.append("回答が変化") }
-      if Set(current.replay.citationLabels) != Set(before.replay.citationLabels) { details.append("引用が変化") }
-      if current.replay.ragTrace?.decision != before.replay.ragTrace?.decision { details.append("検索判断が変化") }
-      if current.replay.elapsedMilliseconds > max(
-        before.replay.elapsedMilliseconds + 250,
-        Int(Double(before.replay.elapsedMilliseconds) * 1.2))
-      {
-        details.append("遅延 +\(current.replay.elapsedMilliseconds - before.replay.elapsedMilliseconds)ms")
+      var changes: [(String, EvidenceRegressionStatus)] = []
+      if normalized(current.replay.content) != normalized(before.replay.content) {
+        changes.append(("回答が変化", .info))
       }
-      guard !details.isEmpty else { return nil }
+      let previousCitations = Set(before.replay.citationLabels)
+      let currentCitations = Set(current.replay.citationLabels)
+      if !previousCitations.isEmpty && !previousCitations.isSubset(of: currentCitations) {
+        changes.append(("引用が消失", policy.citationDisappearedStatus))
+      } else if currentCitations != previousCitations {
+        changes.append(("引用が変化", .info))
+      }
+      if current.replay.ragTrace?.decision != before.replay.ragTrace?.decision {
+        changes.append(("検索判断が変化", policy.searchDecisionChangedStatus))
+      }
+      if current.replay.elapsedMilliseconds > max(
+        before.replay.elapsedMilliseconds + policy.latencyIncreaseMilliseconds,
+        Int(Double(before.replay.elapsedMilliseconds) * policy.latencyMultiplier))
+      {
+        changes.append(("遅延 +\(current.replay.elapsedMilliseconds - before.replay.elapsedMilliseconds)ms", policy.latencyExceededStatus))
+      }
+      guard !changes.isEmpty else { return nil }
+      let status = changes.map(\.1).max { $0.sortOrder < $1.sortOrder } ?? .passed
       return EvidenceRegressionChange(caseID: current.caseID, targetID: current.targetID,
-        detail: details.joined(separator: " / "))
+        status: status, detail: changes.map(\.0).joined(separator: " / "))
     }
   }
 
@@ -4296,6 +4425,7 @@ private struct EvidenceReplayLabView: View {
   @State private var suiteTargetProfileID: UUID?
   @State private var suiteTargetRAGMode: RAGMode = .always
   @State private var runningSuite = false
+  @State private var exportError: String?
 
   private var evidenceMessages: [DisplayMessage] {
     messages.filter { $0.role == .assistant && $0.evidence != nil }
@@ -4543,6 +4673,38 @@ private struct EvidenceReplayLabView: View {
               }
             }
           }
+          GroupBox("回帰ポリシー") {
+            VStack(alignment: .leading, spacing: 7) {
+              HStack {
+                Picker("引用が消失", selection: policyStatusBinding(\.citationDisappearedStatus, suiteID: suite.id)) {
+                  Text("失敗").tag(EvidenceRegressionStatus.failed)
+                  Text("要確認").tag(EvidenceRegressionStatus.review)
+                  Text("情報").tag(EvidenceRegressionStatus.info)
+                }
+                Picker("検索判断が変化", selection: policyStatusBinding(\.searchDecisionChangedStatus, suiteID: suite.id)) {
+                  Text("失敗").tag(EvidenceRegressionStatus.failed)
+                  Text("要確認").tag(EvidenceRegressionStatus.review)
+                  Text("情報").tag(EvidenceRegressionStatus.info)
+                }
+              }
+              HStack {
+                Picker("遅延超過", selection: policyStatusBinding(\.latencyExceededStatus, suiteID: suite.id)) {
+                  Text("失敗").tag(EvidenceRegressionStatus.failed)
+                  Text("要確認").tag(EvidenceRegressionStatus.review)
+                  Text("情報").tag(EvidenceRegressionStatus.info)
+                }
+                Stepper(
+                  "増加: \(suite.policy.latencyIncreaseMilliseconds)ms以上",
+                  value: policyIntBinding(\.latencyIncreaseMilliseconds, suiteID: suite.id), in: 0...10_000,
+                  step: 50)
+                Stepper(
+                  "倍率: \(suite.policy.latencyMultiplier, specifier: "%.1f")倍以上",
+                  value: policyDoubleBinding(\.latencyMultiplier, suiteID: suite.id), in: 1.0...5.0,
+                  step: 0.1)
+              }
+            }
+            .font(.caption)
+          }
           HStack {
             Spacer()
             Button("スイートを実行", systemImage: "play.fill") {
@@ -4557,11 +4719,21 @@ private struct EvidenceReplayLabView: View {
           }
           if let report = regressionStore.reports.first(where: { $0.suiteID == suite.id }) {
             Divider()
-            Text("直近: \(report.entries.count)実行 / 平均 \(report.averageMilliseconds)ms / 差分 \(report.changes.count)件")
+            HStack {
+              Text("直近: \(report.entries.count)実行 / 平均 \(report.averageMilliseconds)ms")
+              .font(.caption.bold())
+              Spacer()
+              Button("Markdown", systemImage: "doc.text") { export(report, format: .markdown) }
+              Button("CSV", systemImage: "tablecells") { export(report, format: .csv) }
+            }
+            Text("合格 \(report.passedCount) / 要確認 \(report.reviewCount) / 失敗 \(report.failedCount) / 情報 \(report.informationCount)")
               .font(.caption.bold())
             ForEach(report.changes) { change in
-              Text("• \(change.detail)").font(.caption).foregroundStyle(.orange)
+              Text("• [\(change.status.title)] \(change.detail)")
+                .font(.caption)
+                .foregroundStyle(color(for: change.status))
             }
+            if let exportError { Text(exportError).font(.caption).foregroundStyle(.red) }
           }
         } else {
           Text("スイートを作成して、現在の回答を基準ケースに追加してください。")
@@ -4569,6 +4741,69 @@ private struct EvidenceReplayLabView: View {
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  private func policyStatusBinding(
+    _ keyPath: WritableKeyPath<EvidenceRegressionPolicy, EvidenceRegressionStatus>, suiteID: UUID
+  ) -> Binding<EvidenceRegressionStatus> {
+    Binding(
+      get: { selectedSuite?.policy[keyPath: keyPath] ?? .review },
+      set: { value in
+        guard var policy = selectedSuite?.policy else { return }
+        policy[keyPath: keyPath] = value
+        regressionStore.updatePolicy(policy, for: suiteID)
+      })
+  }
+
+  private func policyIntBinding(
+    _ keyPath: WritableKeyPath<EvidenceRegressionPolicy, Int>, suiteID: UUID
+  ) -> Binding<Int> {
+    Binding(
+      get: { selectedSuite?.policy[keyPath: keyPath] ?? 250 },
+      set: { value in
+        guard var policy = selectedSuite?.policy else { return }
+        policy[keyPath: keyPath] = value
+        regressionStore.updatePolicy(policy, for: suiteID)
+      })
+  }
+
+  private func policyDoubleBinding(
+    _ keyPath: WritableKeyPath<EvidenceRegressionPolicy, Double>, suiteID: UUID
+  ) -> Binding<Double> {
+    Binding(
+      get: { selectedSuite?.policy[keyPath: keyPath] ?? 1.2 },
+      set: { value in
+        guard var policy = selectedSuite?.policy else { return }
+        policy[keyPath: keyPath] = value
+        regressionStore.updatePolicy(policy, for: suiteID)
+      })
+  }
+
+  private enum ReportExportFormat { case markdown, csv }
+
+  private func export(_ report: EvidenceRegressionReport, format: ReportExportFormat) {
+    let panel = NSSavePanel()
+    let suffix = format == .markdown ? "md" : "csv"
+    panel.nameFieldStringValue = "evidence-regression-\(report.suiteName).\(suffix)"
+    panel.allowedContentTypes = [UTType(filenameExtension: suffix) ?? .plainText]
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do {
+      let output = format == .markdown
+        ? regressionStore.markdown(for: report) : regressionStore.csv(for: report)
+      try Data(output.utf8).write(to: url, options: .atomic)
+      exportError = nil
+    } catch {
+      exportError = "レポートを書き出せませんでした: \(error.localizedDescription)"
+    }
+  }
+
+  private func color(for status: EvidenceRegressionStatus) -> Color {
+    switch status {
+    case .passed: return .green
+    case .info: return .secondary
+    case .review: return .orange
+    case .failed: return .red
     }
   }
 }
