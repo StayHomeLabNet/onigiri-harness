@@ -751,7 +751,7 @@ private enum VibeProjectStatus: String, Codable, CaseIterable, Identifiable {
 }
 
 private struct VibeProject: Identifiable, Codable, Equatable {
-  var id: UUID = UUID()
+  var id: UUID
   var title: String
   var goal: String
   var audience: String
@@ -759,11 +759,55 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var constraints: String
   var completionCriteria: [String]
   var nextStep: String
-  var status: VibeProjectStatus = .draft
+  var status: VibeProjectStatus
   var proposal: VibeBuildProposal?
-  var buildRuns: [VibeBuildRun] = []
-  var createdAt: Date = Date()
-  var updatedAt: Date = Date()
+  var buildRuns: [VibeBuildRun]
+  var createdAt: Date
+  var updatedAt: Date
+
+  init(
+    id: UUID = UUID(), title: String, goal: String, audience: String,
+    essentialFeatures: [String], constraints: String, completionCriteria: [String], nextStep: String,
+    status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
+    buildRuns: [VibeBuildRun] = [], createdAt: Date = Date(), updatedAt: Date = Date()
+  ) {
+    self.id = id
+    self.title = title
+    self.goal = goal
+    self.audience = audience
+    self.essentialFeatures = essentialFeatures
+    self.constraints = constraints
+    self.completionCriteria = completionCriteria
+    self.nextStep = nextStep
+    self.status = status
+    self.proposal = proposal
+    self.buildRuns = buildRuns
+    self.createdAt = createdAt
+    self.updatedAt = updatedAt
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
+    case status, proposal, buildRuns, createdAt, updatedAt
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try values.decode(UUID.self, forKey: .id),
+      title: try values.decode(String.self, forKey: .title),
+      goal: try values.decode(String.self, forKey: .goal),
+      audience: try values.decode(String.self, forKey: .audience),
+      essentialFeatures: try values.decode([String].self, forKey: .essentialFeatures),
+      constraints: try values.decode(String.self, forKey: .constraints),
+      completionCriteria: try values.decode([String].self, forKey: .completionCriteria),
+      nextStep: try values.decode(String.self, forKey: .nextStep),
+      status: try values.decodeIfPresent(VibeProjectStatus.self, forKey: .status) ?? .draft,
+      proposal: try values.decodeIfPresent(VibeBuildProposal.self, forKey: .proposal),
+      buildRuns: try values.decodeIfPresent([VibeBuildRun].self, forKey: .buildRuns) ?? [],
+      createdAt: try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
+      updatedAt: try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date())
+  }
 
   static var blank: VibeProject {
     VibeProject(
@@ -781,6 +825,55 @@ private struct VibeBuildRun: Identifiable, Codable, Equatable {
   var startedAt: Date = Date()
   var status: String
   var detail: String
+  var appliedAt: Date?
+  var revertedAt: Date?
+}
+
+private struct VibeBuildReview {
+  var changedFiles: [String]
+  var diff: String
+  var task: CodexTaskRecord?
+
+  var hasChanges: Bool { !diff.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+}
+
+private enum VibeBuildReviewAction: Identifiable {
+  case apply(UUID)
+  case revert(UUID)
+  case discard(UUID)
+
+  var id: String {
+    switch self {
+    case .apply(let id): return "apply-\(id.uuidString)"
+    case .revert(let id): return "revert-\(id.uuidString)"
+    case .discard(let id): return "discard-\(id.uuidString)"
+    }
+  }
+
+  func title(english: Bool) -> String {
+    switch self {
+    case .apply: return english ? "Apply these changes?" : "この変更を適用しますか？"
+    case .revert: return english ? "Undo the applied changes?" : "適用済みの変更を戻しますか？"
+    case .discard: return english ? "Discard this isolated workspace?" : "この隔離環境を破棄しますか？"
+    }
+  }
+
+  func message(english: Bool) -> String {
+    switch self {
+    case .apply:
+      return english
+        ? "Only the reviewed patch will be applied to the original Git working directory."
+        : "確認したパッチだけを、元のGit作業フォルダへ適用します。"
+    case .revert:
+      return english
+        ? "Onigiri will reverse the patch it applied. This can fail if the original files have since changed."
+        : "Onigiriが適用したパッチを逆方向に適用します。元のファイルが変わっている場合は失敗することがあります。"
+    case .discard:
+      return english
+        ? "The isolated workspace and its un-applied changes will be deleted. The original folder stays untouched."
+        : "隔離環境と未適用の変更を削除します。元のフォルダには影響しません。"
+    }
+  }
 }
 
 private enum VibeBuildWorkspace {
@@ -807,14 +900,95 @@ private enum VibeBuildWorkspace {
     return destination.path
   }
 
-  private static func runGit(arguments: [String]) throws -> (status: Int32, output: String) {
+  static func review(_ run: VibeBuildRun) throws -> VibeBuildReview {
+    guard FileManager.default.fileExists(atPath: run.workspaceDirectory) else {
+      throw StreamError(message: "隔離環境が見つかりません。")
+    }
+    guard isGitDirectory(run.workspaceDirectory), isGitDirectory(run.sourceDirectory) else {
+      throw StreamError(message: "変更の確認と適用は、Gitリポジトリの隔離環境で利用できます。")
+    }
+    let status = try runGit(arguments: ["-C", run.workspaceDirectory, "status", "--porcelain=v1"])
+    guard status.status == 0 else { throw StreamError(message: status.output) }
+    let changedFiles = status.output.split(separator: "\n").map { line in
+      String(decoding: line.utf8.dropFirst(min(3, line.utf8.count)), as: UTF8.self)
+        .trimmingCharacters(in: .whitespaces)
+    }.filter { !$0.isEmpty }
+    let patch = try patch(for: run.workspaceDirectory)
+    return VibeBuildReview(changedFiles: changedFiles, diff: patch, task: nil)
+  }
+
+  static func apply(_ run: VibeBuildRun) throws {
+    try applyPatch(for: run, reverse: false)
+  }
+
+  static func revert(_ run: VibeBuildRun) throws {
+    try applyPatch(for: run, reverse: true)
+  }
+
+  static func discard(_ run: VibeBuildRun) throws {
+    guard FileManager.default.fileExists(atPath: run.workspaceDirectory) else { return }
+    if isGitDirectory(run.workspaceDirectory), isGitDirectory(run.sourceDirectory) {
+      let result = try runGit(arguments: ["-C", run.sourceDirectory, "worktree", "remove", "--force", run.workspaceDirectory])
+      guard result.status == 0 else { throw StreamError(message: result.output) }
+    } else {
+      try FileManager.default.removeItem(atPath: run.workspaceDirectory)
+    }
+  }
+
+  private static func applyPatch(for run: VibeBuildRun, reverse: Bool) throws {
+    guard isGitDirectory(run.workspaceDirectory), isGitDirectory(run.sourceDirectory) else {
+      throw StreamError(message: "元のフォルダへ戻せる適用は、Gitリポジトリで利用できます。")
+    }
+    let patch = try patch(for: run.workspaceDirectory)
+    guard !patch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw StreamError(message: "適用できる変更がありません。")
+    }
+    var arguments = ["-C", run.sourceDirectory, "apply", "--3way", "--whitespace=nowarn"]
+    if reverse { arguments.append("--reverse") }
+    arguments.append("-")
+    let result = try runGit(arguments: arguments, input: Data(patch.utf8))
+    guard result.status == 0 else {
+      throw StreamError(message: "パッチを適用できませんでした: \(result.output)")
+    }
+  }
+
+  private static func patch(for workspaceDirectory: String) throws -> String {
+    let tracked = try runGit(arguments: ["-C", workspaceDirectory, "diff", "--binary", "--no-ext-diff"])
+    guard tracked.status == 0 else { throw StreamError(message: tracked.output) }
+    let untracked = try runGit(arguments: ["-C", workspaceDirectory, "ls-files", "--others", "--exclude-standard"])
+    guard untracked.status == 0 else { throw StreamError(message: untracked.output) }
+    var output = tracked.output
+    for file in untracked.output.split(separator: "\n").map(String.init) where !file.isEmpty {
+      let addition = try runGit(arguments: [
+        "-C", workspaceDirectory, "diff", "--no-index", "--binary", "--src-prefix=a/", "--dst-prefix=b/",
+        "/dev/null", file,
+      ])
+      if addition.status == 0 || addition.status == 1 { output += "\n" + addition.output }
+      else { throw StreamError(message: addition.output) }
+    }
+    return output
+  }
+
+  private static func isGitDirectory(_ path: String) -> Bool {
+    (try? runGit(arguments: ["-C", path, "rev-parse", "--is-inside-work-tree"]).status) == 0
+  }
+
+  private static func runGit(arguments: [String], input: Data? = nil) throws -> (status: Int32, output: String) {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     process.arguments = arguments
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = pipe
-    try process.run()
+    if let input {
+      let inputPipe = Pipe()
+      process.standardInput = inputPipe
+      try process.run()
+      inputPipe.fileHandleForWriting.write(input)
+      inputPipe.fileHandleForWriting.closeFile()
+    } else {
+      try process.run()
+    }
     process.waitUntilExit()
     let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     return (process.terminationStatus, output.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -6110,6 +6284,11 @@ private struct VibeProjectEditor: View {
   @State private var buildModel = ""
   @State private var preparingBuild = false
   @State private var buildMessage: String?
+  @State private var selectedBuildRunID: UUID?
+  @State private var buildReview: VibeBuildReview?
+  @State private var reviewMessage: String?
+  @State private var reviewingBuild = false
+  @State private var pendingReviewAction: VibeBuildReviewAction?
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -6185,6 +6364,7 @@ private struct VibeProjectEditor: View {
 
         proposalSection
         guidedBuildSection
+        reviewSection
 
         HStack {
           if let delete {
@@ -6206,6 +6386,108 @@ private struct VibeProjectEditor: View {
       }
       .padding(.leading, 14)
       .padding(.bottom, 4)
+    }
+    .alert(item: $pendingReviewAction) { action in
+      Alert(
+        title: Text(action.title(english: english)),
+        message: Text(action.message(english: english)),
+        primaryButton: .destructive(Text(english ? "Continue" : "続ける")) {
+          Task { await performReviewAction(action) }
+        },
+        secondaryButton: .cancel(Text(english ? "Cancel" : "キャンセル")))
+    }
+  }
+
+  private var selectedBuildRun: VibeBuildRun? {
+    let id = selectedBuildRunID ?? project.buildRuns.first?.id
+    return project.buildRuns.first { $0.id == id }
+  }
+
+  @ViewBuilder private var reviewSection: some View {
+    if project.buildRuns.isEmpty {
+      EmptyView()
+    } else {
+      GroupBox(english ? "Review and apply" : "確認・適用・破棄") {
+        VStack(alignment: .leading, spacing: 10) {
+          HStack {
+            Picker(english ? "Build" : "ビルド", selection: $selectedBuildRunID) {
+              ForEach(project.buildRuns) { run in
+                Text("\(run.provider.name) · \(run.startedAt.formatted(date: .abbreviated, time: .shortened))")
+                  .tag(Optional(run.id))
+              }
+            }
+            .pickerStyle(.menu)
+            Button(english ? "Inspect changes" : "変更を確認", systemImage: "doc.text.magnifyingglass") {
+              Task { await inspectSelectedBuild() }
+            }
+            .disabled(reviewingBuild || selectedBuildRun == nil)
+          }
+
+          if let reviewMessage {
+            Text(reviewMessage).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+          }
+
+          if let review = buildReview {
+            if let task = review.task {
+              GroupBox(english ? "AI task result" : "AIタスク結果") {
+                VStack(alignment: .leading, spacing: 5) {
+                  Text(task.status.rawValue).font(.caption.bold())
+                  if let result = task.result { Text(result).textSelection(.enabled) }
+                  if let error = task.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+              }
+            }
+            if review.changedFiles.isEmpty {
+              Text(english ? "No file changes were found in the isolated workspace." : "隔離環境にファイル変更は見つかりませんでした。")
+                .font(.caption).foregroundStyle(.secondary)
+            } else {
+              GroupBox(english ? "Changed files" : "変更されたファイル") {
+                VStack(alignment: .leading, spacing: 3) {
+                  ForEach(review.changedFiles, id: \.self) { file in
+                    Label(file, systemImage: "doc")
+                      .font(.caption)
+                      .frame(maxWidth: .infinity, alignment: .leading)
+                      .textSelection(.enabled)
+                  }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+              }
+            }
+            if review.hasChanges {
+              GroupBox(english ? "Patch" : "変更内容") {
+                ScrollView(.horizontal) {
+                  Text(review.diff)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(minHeight: 110, maxHeight: 230, alignment: .topLeading)
+              }
+            }
+            HStack {
+              if let run = selectedBuildRun {
+                if run.appliedAt == nil {
+                  Button(english ? "Discard workspace" : "隔離環境を破棄", systemImage: "trash", role: .destructive) {
+                    pendingReviewAction = .discard(run.id)
+                  }
+                } else if run.revertedAt == nil {
+                  Button(english ? "Undo applied changes" : "適用済み変更を戻す", systemImage: "arrow.uturn.backward", role: .destructive) {
+                    pendingReviewAction = .revert(run.id)
+                  }
+                }
+                Spacer()
+                Button(english ? "Apply to original" : "元フォルダへ適用", systemImage: "checkmark.circle") {
+                  pendingReviewAction = .apply(run.id)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!review.hasChanges || run.appliedAt != nil)
+              }
+            }
+          }
+        }
+        .padding(.top, 4)
+      }
     }
   }
 
@@ -6415,6 +6697,65 @@ private struct VibeProjectEditor: View {
     } catch {
       buildMessage = error.localizedDescription
     }
+  }
+
+  @MainActor private func inspectSelectedBuild() async {
+    guard let run = selectedBuildRun else { return }
+    reviewingBuild = true
+    reviewMessage = english ? "Inspecting the isolated workspace…" : "隔離環境の変更を確認しています…"
+    defer { reviewingBuild = false }
+    do {
+      var review = try VibeBuildWorkspace.review(run)
+      review.task = try await loadTask(run.taskID)
+      buildReview = review
+      reviewMessage = review.hasChanges
+        ? (english ? "Review the patch, then choose whether to apply it." : "変更内容を確認してから、適用するか選んでください。")
+        : (english ? "No patch is available to apply." : "適用できる変更はありません。")
+    } catch {
+      buildReview = nil
+      reviewMessage = error.localizedDescription
+    }
+  }
+
+  @MainActor private func performReviewAction(_ action: VibeBuildReviewAction) async {
+    let runID: UUID
+    switch action {
+    case .apply(let id), .revert(let id), .discard(let id): runID = id
+    }
+    guard let index = project.buildRuns.firstIndex(where: { $0.id == runID }) else { return }
+    do {
+      switch action {
+      case .apply:
+        try VibeBuildWorkspace.apply(project.buildRuns[index])
+        project.buildRuns[index].appliedAt = Date()
+        project.buildRuns[index].status = "適用済み"
+        project.buildRuns[index].detail = "確認済みのパッチを元の作業フォルダへ適用しました。"
+        reviewMessage = english ? "The reviewed patch was applied to the original folder." : "確認済みのパッチを元フォルダへ適用しました。"
+      case .revert:
+        try VibeBuildWorkspace.revert(project.buildRuns[index])
+        project.buildRuns[index].revertedAt = Date()
+        project.buildRuns[index].status = "適用を取り消し"
+        project.buildRuns[index].detail = "Onigiriが適用したパッチを元の作業フォルダから戻しました。"
+        reviewMessage = english ? "The applied patch was reversed." : "適用済みのパッチを戻しました。"
+      case .discard:
+        try VibeBuildWorkspace.discard(project.buildRuns[index])
+        project.buildRuns[index].status = "隔離環境を破棄"
+        project.buildRuns[index].detail = "隔離環境を破棄しました。元の作業フォルダは変更していません。"
+        reviewMessage = english ? "The isolated workspace was discarded." : "隔離環境を破棄しました。"
+      }
+      project.proposal = proposal
+      save(project)
+      buildReview = nil
+    } catch {
+      reviewMessage = error.localizedDescription
+    }
+  }
+
+  private func loadTask(_ id: UUID?) async throws -> CodexTaskRecord? {
+    guard let id else { return nil }
+    let (data, response) = try await URLSession.shared.data(for: URLRequest(url: OnigiriEndpoint.url("agents/tasks")))
+    guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+    return try JSONDecoder().decode(CodexTaskListResponse.self, from: data).tasks.first { $0.id == id }
   }
 
   private func guidedBuildPrompt(proposal: VibeBuildProposal, workspace: String) -> String {
