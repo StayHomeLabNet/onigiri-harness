@@ -22,13 +22,13 @@ Codex、Antigravity、Claude Code、ローカルLLMは、この体験を実現�
 | --- | --- | --- |
 | **0 — Local AI Foundation** | 実装済み | 会話、Profile、複数モデル、保存、停止、コンテキスト構築 |
 | **1 — Grounded Knowledge & Evidence** | 実装済み | 共通RAG、資料管理、引用、評価、根拠記録、再現・回帰確認 |
-| **2 — Vibe Build Workspace** | 次に着手 | 自然言語の企画から、提案、実装、確認可能な適用までを一貫化 |
+| **2 — Vibe Build Workspace** | 進行中 | 自然言語の企画から、提案、実装、確認可能な適用までを一貫化 |
 | **3 — Decision Lab** | 実装済み | Jev類似モデルの実験、比較、評価、ルーティング検討 |
 | **4 — Local AI Gateway** | 実装済み | OpenAI互換APIとCLIベースの通常チャット |
 | **5 — Trust, Web & Distribution** | 大部分実装済み | 安全性、移行、Webリサーチ、アクセシビリティ、公開・CI |
 | **6 — Continuous Quality** | 一部実装済み | Evidence Regressionは実装済み。Headless実行とCI判定が次の候補 |
 
-次に実装する候補は、**Parent Phase 2 / Sub-phase 2.1 — Project Brief & Intent Canvas** です。以後のVibe Build機能は、利用者の要望を「AIタスク」へ直接投げる前に、目的・対象ユーザー・制約・完成条件として整理するところから始めます。
+次に実装する候補は、**Parent Phase 2 / Sub-phase 2.2 — Build Proposal** です。以後のVibe Build機能は、保存したBriefを基に、AIタスクへ直接投げる前に画面・機能・変更範囲を確認できる提案へ変換します。
 
 ```mermaid
 flowchart LR
@@ -84,7 +84,7 @@ flowchart LR
 | Sub-phase | 状態 | 内容 |
 | --- | --- | --- |
 | 2.0 — Agent Execution Foundation | 実装済み | 複数AIのタスク実行、進行表示、取消、タイムアウト、履歴、MCPによるRAG参照 |
-| 2.1 — Project Brief & Intent Canvas | 次に着手 | 「何を作りたいか」を目的、対象者、必須機能、制約、完成条件へ対話的に整理・保存 |
+| 2.1 — Project Brief & Intent Canvas | 実装済み | 「何を作りたいか」を目的、対象者、必須機能、制約、完成条件、次の一手へ整理し、プロジェクトとしてローカル保存 |
 | 2.2 — Build Proposal | 計画済み | 画面、機能、データ、変更範囲、想定リスクを日常語で事前提示し、着手前に確認できるようにする |
 | 2.3 — Guided Build Orchestration | 計画済み | 適切なAI・役割を内部で選び、安全な作業コピーで実装・テストを進行表示する |
 | 2.4 — Review, Apply & Revert | 計画済み | 変更要約、差分、検証結果を提示し、利用者が適用・保留・破棄を選べるようにする |
@@ -154,12 +154,11 @@ Jevに限らず、ローカルまたは互換APIで提供される意思決定�
 
 ## 実装の優先順
 
-1. **Parent Phase 2 / Sub-phase 2.1 — Project Brief & Intent Canvas**
-2. **Parent Phase 2 / Sub-phase 2.2 — Build Proposal**
-3. **Parent Phase 2 / Sub-phase 2.3 — Guided Build Orchestration**
-4. **Parent Phase 2 / Sub-phase 2.4 — Review, Apply & Revert**
-5. **Parent Phase 2 / Sub-phase 2.5 — Project Memory & Iteration**
-6. **Parent Phase 6 / Sub-phase 6.4 — Headless Regression & CI Gate**
+1. **Parent Phase 2 / Sub-phase 2.2 — Build Proposal**
+2. **Parent Phase 2 / Sub-phase 2.3 — Guided Build Orchestration**
+3. **Parent Phase 2 / Sub-phase 2.4 — Review, Apply & Revert**
+4. **Parent Phase 2 / Sub-phase 2.5 — Project Memory & Iteration**
+5. **Parent Phase 6 / Sub-phase 6.4 — Headless Regression & CI Gate**
 
 ```mermaid
 flowchart LR

@@ -726,6 +726,86 @@ private struct StoredConversation: Identifiable, Equatable, Codable {
   }
 }
 
+private enum VibeProjectStatus: String, Codable, CaseIterable, Identifiable {
+  case draft
+  case active
+  case completed
+
+  var id: String { rawValue }
+
+  func title(english: Bool) -> String {
+    switch self {
+    case .draft: return english ? "Draft" : "下書き"
+    case .active: return english ? "In progress" : "進行中"
+    case .completed: return english ? "Completed" : "完了"
+    }
+  }
+
+  var symbol: String {
+    switch self {
+    case .draft: return "doc.text"
+    case .active: return "sparkles"
+    case .completed: return "checkmark.circle.fill"
+    }
+  }
+}
+
+private struct VibeProject: Identifiable, Codable, Equatable {
+  var id: UUID = UUID()
+  var title: String
+  var goal: String
+  var audience: String
+  var essentialFeatures: [String]
+  var constraints: String
+  var completionCriteria: [String]
+  var nextStep: String
+  var status: VibeProjectStatus = .draft
+  var createdAt: Date = Date()
+  var updatedAt: Date = Date()
+
+  static var blank: VibeProject {
+    VibeProject(
+      title: "", goal: "", audience: "", essentialFeatures: [], constraints: "",
+      completionCriteria: [], nextStep: "")
+  }
+}
+
+@MainActor private final class VibeProjectStore: ObservableObject {
+  static let shared = VibeProjectStore()
+  @Published private(set) var projects: [VibeProject] = []
+  private let defaultsKey = "onigiri.vibeProjects.v1"
+
+  private init() { load() }
+
+  func save(_ project: VibeProject) {
+    var updated = project
+    updated.updatedAt = Date()
+    if let index = projects.firstIndex(where: { $0.id == updated.id }) {
+      projects[index] = updated
+    } else {
+      projects.insert(updated, at: 0)
+    }
+    persist()
+  }
+
+  func delete(_ project: VibeProject) {
+    projects.removeAll { $0.id == project.id }
+    persist()
+  }
+
+  private func load() {
+    guard let data = UserDefaults.standard.data(forKey: defaultsKey),
+      let decoded = try? JSONDecoder().decode([VibeProject].self, from: data)
+    else { return }
+    projects = decoded.sorted { $0.updatedAt > $1.updatedAt }
+  }
+
+  private func persist() {
+    guard let data = try? JSONEncoder().encode(projects) else { return }
+    UserDefaults.standard.set(data, forKey: defaultsKey)
+  }
+}
+
 private struct ChatComposerTextView: NSViewRepresentable {
   @Binding var text: String
   let isEnabled: Bool
@@ -1190,6 +1270,7 @@ struct ChatView: View {
   @State private var showingKnowledgeSelectionHistory = false
   @State private var showingRAGEvaluation = false
   @State private var showingCodexTasks = false
+  @State private var showingVibeProjects = false
   @State private var aiTaskAvailabilities: [CodexAvailability] = []
   @State private var codexTasks: [CodexTaskRecord] = []
   @State private var showingMCPAudit = false
@@ -1310,6 +1391,10 @@ struct ChatView: View {
         cancel: { id in await cancelCodexTask(id) }
       )
       .frame(minWidth: 820, minHeight: 620, alignment: .topLeading)
+    }
+    .sheet(isPresented: $showingVibeProjects) {
+      VibeProjectsView()
+        .frame(minWidth: 900, minHeight: 620, alignment: .topLeading)
     }
     .sheet(isPresented: $showingWebResearch) {
       WebResearchView(sources: $webResearchQueue.sources)
@@ -3152,6 +3237,11 @@ struct ChatView: View {
         Button("AIタスク", systemImage: "terminal") {
           showingCodexTasks = true
           Task { await loadCodexTasks() }
+        }
+        .disabled(busy)
+
+        Button("プロジェクト", systemImage: "target") {
+          showingVibeProjects = true
         }
         .disabled(busy)
 
@@ -5791,6 +5881,211 @@ private struct DataManagementView: View {
     } catch {
       message = error.localizedDescription
     }
+  }
+}
+
+private struct VibeProjectsView: View {
+  @Environment(\.dismiss) private var dismiss
+  @Environment(\.locale) private var locale
+  @StateObject private var store = VibeProjectStore.shared
+  @State private var selectedProjectID: UUID?
+
+  private var english: Bool { locale.language.languageCode?.identifier == "en" }
+  private var selectedProject: VibeProject? {
+    let id = selectedProjectID ?? store.projects.first?.id
+    return store.projects.first { $0.id == id }
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      SheetTitleBar(title: english ? "Projects" : "プロジェクト")
+      Text(english
+        ? "Turn an idea into a clear goal before asking an AI to build it."
+        : "作りたいものを、AIに実装を頼む前に分かりやすい目標へ整理します。")
+        .foregroundStyle(.secondary)
+
+      HSplitView {
+        projectList
+          .frame(minWidth: 230, idealWidth: 270, maxWidth: 320, maxHeight: .infinity)
+        VibeProjectEditor(
+          project: selectedProject ?? .blank,
+          english: english,
+          save: { project in
+            store.save(project)
+            selectedProjectID = project.id
+          },
+          delete: selectedProject.map { project in
+            { store.delete(project); selectedProjectID = store.projects.first?.id }
+          })
+          .id(selectedProject?.id ?? UUID())
+          .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+      }
+    }
+    .padding(20)
+  }
+
+  private var projectList: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack {
+        Text(english ? "Your projects" : "プロジェクト一覧").font(.headline)
+        Spacer()
+        Button(english ? "New" : "新規", systemImage: "plus") {
+          selectedProjectID = nil
+        }
+        .labelStyle(.iconOnly)
+        .help(english ? "New project" : "新しいプロジェクト")
+      }
+      if store.projects.isEmpty {
+        ContentUnavailableView(
+          english ? "No projects yet" : "プロジェクトはありません",
+          systemImage: "target",
+          description: Text(english ? "Create a goal for something you want to make." : "作りたいものの目標を作成してください。"))
+      } else {
+        List(selection: $selectedProjectID) {
+          ForEach(store.projects) { project in
+            VStack(alignment: .leading, spacing: 5) {
+              Text(project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title)
+                .font(.headline)
+                .lineLimit(2)
+              Label(project.status.title(english: english), systemImage: project.status.symbol)
+                .font(.caption)
+                .foregroundStyle(project.status == .completed ? .green : .secondary)
+              if !project.nextStep.isEmpty {
+                Text(project.nextStep).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+              }
+            }
+            .padding(.vertical, 4)
+            .tag(Optional(project.id))
+          }
+        }
+      }
+    }
+    .padding(.trailing, 14)
+  }
+}
+
+private struct VibeProjectEditor: View {
+  let sourceProject: VibeProject
+  let english: Bool
+  let save: (VibeProject) -> Void
+  let delete: (() -> Void)?
+  @State private var project: VibeProject
+  @State private var featureLines: String
+  @State private var completionLines: String
+
+  init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
+       delete: (() -> Void)?) {
+    sourceProject = project
+    self.english = english
+    self.save = save
+    self.delete = delete
+    _project = State(initialValue: project)
+    _featureLines = State(initialValue: project.essentialFeatures.joined(separator: "\n"))
+    _completionLines = State(initialValue: project.completionCriteria.joined(separator: "\n"))
+  }
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 16) {
+        HStack {
+          VStack(alignment: .leading, spacing: 3) {
+            Text(project.title.isEmpty ? (english ? "New project" : "新しいプロジェクト") : project.title)
+              .font(.title2.bold())
+            Text(english ? "This is your shared source of truth for the build." : "ここが、これからの制作で共有する目標と判断基準です。")
+              .font(.caption).foregroundStyle(.secondary)
+          }
+          Spacer()
+          Picker(english ? "Status" : "状態", selection: $project.status) {
+            ForEach(VibeProjectStatus.allCases) { status in
+              Text(status.title(english: english)).tag(status)
+            }
+          }
+          .pickerStyle(.menu)
+        }
+
+        GroupBox(english ? "What do you want to make?" : "何を作りたいですか？") {
+          VStack(alignment: .leading, spacing: 10) {
+            TextField(english ? "Project name" : "プロジェクト名", text: $project.title)
+              .textFieldStyle(.roundedBorder)
+            labeledEditor(
+              english ? "Goal" : "目標",
+              english ? "For example: Help me keep a simple record of books I read." : "例: 読んだ本を簡単に記録できるようにしたい。",
+              text: $project.goal, minHeight: 72)
+            TextField(english ? "Who is it for?" : "誰のために作りますか？", text: $project.audience)
+              .textFieldStyle(.roundedBorder)
+          }
+          .padding(.top, 4)
+        }
+
+        GroupBox(english ? "What matters?" : "何を大切にしますか？") {
+          VStack(alignment: .leading, spacing: 10) {
+            labeledEditor(
+              english ? "Essential features — one per line" : "必須の機能 — 1行に1つ",
+              english ? "Add a book\nMark it as read\nShow a monthly list" : "本を追加する\n読了を記録する\n月ごとに一覧で見る",
+              text: $featureLines, minHeight: 92)
+            labeledEditor(
+              english ? "Constraints" : "制約・希望",
+              english ? "For example: macOS app, local data only, no account required." : "例: macOSアプリ、データはローカルだけ、アカウント不要。",
+              text: $project.constraints, minHeight: 72)
+          }
+          .padding(.top, 4)
+        }
+
+        GroupBox(english ? "How will you know it is ready?" : "何ができたら完成ですか？") {
+          VStack(alignment: .leading, spacing: 10) {
+            labeledEditor(
+              english ? "Completion criteria — one per line" : "完成条件 — 1行に1つ",
+              english ? "I can add a book\nI can see saved books after restarting" : "本を追加できる\n再起動後も記録が残る",
+              text: $completionLines, minHeight: 92)
+            TextField(english ? "Next step" : "次にすること", text: $project.nextStep)
+              .textFieldStyle(.roundedBorder)
+          }
+          .padding(.top, 4)
+        }
+
+        HStack {
+          if let delete {
+            Button(english ? "Delete project" : "プロジェクトを削除", systemImage: "trash", role: .destructive) {
+              delete()
+            }
+          }
+          Spacer()
+          Button(english ? "Save project" : "プロジェクトを保存", systemImage: "checkmark") {
+            project.essentialFeatures = lines(from: featureLines)
+            project.completionCriteria = lines(from: completionLines)
+            save(project)
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(project.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || project.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+      }
+      .padding(.leading, 14)
+      .padding(.bottom, 4)
+    }
+  }
+
+  private func labeledEditor(_ title: String, _ placeholder: String, text: Binding<String>, minHeight: CGFloat) -> some View {
+    VStack(alignment: .leading, spacing: 5) {
+      Text(title).font(.caption).foregroundStyle(.secondary)
+      TextEditor(text: text)
+        .font(.body)
+        .frame(minHeight: minHeight)
+        .padding(5)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .topLeading) {
+          if text.wrappedValue.isEmpty {
+            Text(placeholder).foregroundStyle(.tertiary).padding(12).allowsHitTesting(false)
+          }
+        }
+    }
+  }
+
+  private func lines(from text: String) -> [String] {
+    text.split(whereSeparator: { $0.isNewline })
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
   }
 }
 
