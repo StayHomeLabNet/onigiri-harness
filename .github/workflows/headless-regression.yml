@@ -1,0 +1,60 @@
+name: Headless Regression Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite_path:
+        description: "評価スイートJSONのリポジトリ内パス"
+        required: true
+        default: "evaluation-suite.json"
+      baseline_path:
+        description: "比較する基準レポートJSONのリポジトリ内パス（任意）"
+        required: false
+        default: ""
+      server_url:
+        description: "OnigiriServer URL"
+        required: true
+        default: "http://127.0.0.1:18080"
+      provider:
+        description: "任意: provider ID"
+        required: false
+        default: ""
+      model:
+        description: "任意: model ID"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: Headless RAG regression
+    # A local model and OnigiriServer are required. Configure a self-hosted macOS runner for this job.
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Run regression gate
+        env:
+          SUITE_PATH: ${{ inputs.suite_path }}
+          BASELINE_PATH: ${{ inputs.baseline_path }}
+          SERVER_URL: ${{ inputs.server_url }}
+          PROVIDER: ${{ inputs.provider }}
+          MODEL: ${{ inputs.model }}
+        run: |
+          args=(--suite "$SUITE_PATH" --server "$SERVER_URL" --format json --output regression-report.json --fail-on-regression)
+          if [ -n "$BASELINE_PATH" ]; then args+=(--baseline "$BASELINE_PATH"); fi
+          if [ -n "$PROVIDER" ]; then args+=(--provider "$PROVIDER"); fi
+          if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
+          swift run onigiri-eval "${args[@]}"
+      - name: Upload regression report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0 # v7.0.1
+        with:
+          name: onigiri-headless-regression-report
+          path: regression-report.json
+          if-no-files-found: warn

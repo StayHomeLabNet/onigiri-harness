@@ -41,7 +41,9 @@ private struct Options {
   let suiteURL: URL
   let serverURL: URL
   let outputURL: URL?
+  let baselineURL: URL?
   let failedOnly: Bool
+  let failOnRegression: Bool
   let format: OutputFormat
   let providerID: String?
   let baseURL: String?
@@ -53,7 +55,9 @@ private struct Options {
     var suite: String?
     var server = "http://127.0.0.1:18080"
     var output: String?
+    var baseline: String?
     var failedOnly = false
+    var failOnRegression = false
     var format = OutputFormat.markdown
     var providerID: String?
     var baseURL: String?
@@ -78,7 +82,12 @@ private struct Options {
         index += 1
         guard index < arguments.count else { throw CLIError.usage }
         output = arguments[index]
+      case "--baseline":
+        index += 1
+        guard index < arguments.count else { throw CLIError.usage }
+        baseline = arguments[index]
       case "--failed-only": failedOnly = true
+      case "--fail-on-regression": failOnRegression = true
       case "--format":
         index += 1
         guard index < arguments.count, let value = OutputFormat(rawValue: arguments[index]) else {
@@ -136,7 +145,9 @@ private struct Options {
     guard let serverURL = URL(string: server) else { throw CLIError.invalidServer(server) }
     return Self(
       suiteURL: URL(fileURLWithPath: suite), serverURL: serverURL,
-      outputURL: output.map(URL.init(fileURLWithPath:)), failedOnly: failedOnly,
+      outputURL: output.map(URL.init(fileURLWithPath:)),
+      baselineURL: baseline.map(URL.init(fileURLWithPath:)), failedOnly: failedOnly,
+      failOnRegression: failOnRegression,
       format: format, providerID: providerID, baseURL: baseURL, modelID: modelID,
       ragMode: ragMode,
       searchSettings: KnowledgeSearchSettings(
@@ -187,6 +198,8 @@ private enum OnigiriEvalCLI {
       }
       let report = RAGEvaluationReport(
         createdAt: startedAt, trigger: .commandLine, entries: entries)
+      let baseline = try options.baselineURL.map(loadReport)
+      let regressions = baseline.map { report.regressions(comparedTo: $0) } ?? []
       let outputData: Data
       switch options.format {
       case .markdown:
@@ -204,7 +217,11 @@ private enum OnigiriEvalCLI {
         FileHandle.standardOutput.write(outputData)
         FileHandle.standardOutput.write(Data("\n".utf8))
       }
-      Foundation.exit(report.failedCount == 0 ? 0 : 1)
+      if !regressions.isEmpty {
+        let summary = "回帰: \(regressions.count)件\n"
+        FileHandle.standardError.write(Data(summary.utf8))
+      }
+      Foundation.exit(report.failedCount == 0 && (!options.failOnRegression || regressions.isEmpty) ? 0 : 1)
     } catch CLIError.help {
       printUsage()
     } catch {
@@ -221,6 +238,12 @@ private enum OnigiriEvalCLI {
     if let suite = try? isoDecoder.decode(EvaluationSuite.self, from: data) { return suite.cases }
     if let cases = try? isoDecoder.decode([EvaluationCase].self, from: data) { return cases }
     return try JSONDecoder().decode([EvaluationCase].self, from: data)
+  }
+
+  private static func loadReport(_ url: URL) throws -> RAGEvaluationReport {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return try decoder.decode(RAGEvaluationReport.self, from: Data(contentsOf: url))
   }
 
   private static func run(
@@ -271,7 +294,9 @@ private enum OnigiriEvalCLI {
         --rag-mode disabled|always|agentic
         --limit N --min-score N --keyword-weight N --embedding-weight N
         --format markdown|json --output <ファイル> --failed-only
+        --baseline <前回JSON> --fail-on-regression
       実行中の OnigiriServer に評価ケースを送り、MarkdownまたはJSONレポートを生成します。
+      --fail-on-regressionを付けると、基準レポートより悪化した結果で終了コード1を返します。
       """ + "\n"
     handle.write(Data(text.utf8))
   }

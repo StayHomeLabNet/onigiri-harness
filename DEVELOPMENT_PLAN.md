@@ -26,9 +26,9 @@ Codex、Antigravity、Claude Code、ローカルLLMは、この体験を実現�
 | **3 — Decision Lab** | 実装済み | Jev類似モデルの実験、比較、評価、ルーティング検討 |
 | **4 — Local AI Gateway** | 実装済み | OpenAI互換APIとCLIベースの通常チャット |
 | **5 — Trust, Web & Distribution** | 大部分実装済み | 安全性、移行、Webリサーチ、アクセシビリティ、公開・CI |
-| **6 — Continuous Quality** | 一部実装済み | Evidence Regressionは実装済み。Headless実行とCI判定が次の候補 |
+| **6 — Continuous Quality** | 実装済み | Evidence Regression、headless RAG評価、基準比較、CIゲートを実装済み |
 
-次に実装する候補は、**Parent Phase 6 / Sub-phase 6.4 — Headless Regression & CI Gate** です。Evidence Regression SuiteをGUIなしで実行し、CIで回帰を合否判定できるようにします。
+次に実装する候補は、利用時に判明したVibe Buildまたは評価基盤の改善点を、独立したSub-phaseとして定義して着手します。
 
 ```mermaid
 flowchart LR
@@ -150,11 +150,11 @@ Jevに限らず、ローカルまたは互換APIで提供される意思決定�
 | 6.1 — Evidence & Replay Lab | 実装済み | Context Flight RecorderとCounterfactual Replay |
 | 6.2 — Evidence Regression Suites | 実装済み | 重要な回答の基準ケースと条件比較 |
 | 6.3 — Regression Policies & Reports | 実装済み | 回帰分類、ポリシー、Markdown/CSVレポート |
-| 6.4 — Headless Regression & CI Gate | 計画済み | GUIを開かずにSuiteを実行し、CIで回帰を合否判定。ただしVibe Build Workspaceの基本導線を優先する |
+| 6.4 — Headless Regression & CI Gate | 実装済み | `onigiri-eval`でGUIなしに評価を実行し、基準レポートとの回帰比較を終了コードへ反映。self-hosted macOS Runner用の手動CIゲートを追加 |
 
 ## 実装の優先順
 
-1. **Parent Phase 6 / Sub-phase 6.4 — Headless Regression & CI Gate**
+現在定義済みのVibe BuildとContinuous QualityのSub-phaseは完了です。次の着手は、実運用で得た改善点を基に新しいSub-phaseとして定義します。
 
 ```mermaid
 flowchart LR

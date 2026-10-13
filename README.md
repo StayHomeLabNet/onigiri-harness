@@ -208,6 +208,14 @@ Legacy Phase 33 では、選択済みの評価環境とケースを毎日指定�
 
 `onigiri-eval` CLIは `--provider`、`--base-url`、`--model` で評価環境を切り替え、検索件数・閾値・Keyword/Embeddingウェイトを指定できるようになりました。`--format json` を使うと、CIや監視処理で読み取れる機械可読レポートを生成します。
 
+前回のJSONレポートを`--baseline`で指定し、`--fail-on-regression`を付けると、合否低下や応答時間悪化などの回帰で終了コード1を返します。`.github/workflows/headless-regression.yml`は、ローカルモデルとOnigiriServerを起動できるself-hosted macOS ARM64 Runnerから、このゲートを手動実行するためのワークフローです。
+
+```bash
+swift run onigiri-eval --suite onigiri-rag-evaluation.json \
+  --format json --output current-report.json \
+  --baseline baseline-report.json --fail-on-regression
+```
+
 ```sh
 swift run onigiri-eval --suite onigiri-rag-evaluation.json \
   --provider ollama --base-url http://127.0.0.1:11434/v1 --model llama3 \
