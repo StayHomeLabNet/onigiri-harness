@@ -761,6 +761,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var nextStep: String
   var status: VibeProjectStatus = .draft
   var proposal: VibeBuildProposal?
+  var buildRuns: [VibeBuildRun] = []
   var createdAt: Date = Date()
   var updatedAt: Date = Date()
 
@@ -768,6 +769,78 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     VibeProject(
       title: "", goal: "", audience: "", essentialFeatures: [], constraints: "",
       completionCriteria: [], nextStep: "")
+  }
+}
+
+private struct VibeBuildRun: Identifiable, Codable, Equatable {
+  var id: UUID = UUID()
+  var provider: AITaskProvider
+  var sourceDirectory: String
+  var workspaceDirectory: String
+  var taskID: UUID?
+  var startedAt: Date = Date()
+  var status: String
+  var detail: String
+}
+
+private enum VibeBuildWorkspace {
+  static func prepare(sourceDirectory: String, projectID: UUID) throws -> String {
+    let sourceURL = URL(fileURLWithPath: sourceDirectory, isDirectory: true).standardizedFileURL
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory), isDirectory.boolValue
+    else { throw StreamError(message: "作業元フォルダが見つかりません。") }
+
+    let root = try FileManager.default.url(
+      for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+      .appending(path: "OnigiriHarness/VibeBuilds/\(projectID.uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let destination = root.appending(path: ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-"), directoryHint: .isDirectory)
+
+    if FileManager.default.fileExists(atPath: sourceURL.appending(path: ".git").path) {
+      let result = try runGit(arguments: ["-C", sourceURL.path, "worktree", "add", "--detach", destination.path, "HEAD"])
+      guard result.status == 0 else {
+        throw StreamError(message: "安全なGit作業コピーを作成できませんでした: \(result.output)")
+      }
+    } else {
+      try copyDirectory(from: sourceURL, to: destination)
+    }
+    return destination.path
+  }
+
+  private static func runGit(arguments: [String]) throws -> (status: Int32, output: String) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    try process.run()
+    process.waitUntilExit()
+    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    return (process.terminationStatus, output.trimmingCharacters(in: .whitespacesAndNewlines))
+  }
+
+  private static func copyDirectory(from source: URL, to destination: URL) throws {
+    let ignoredNames: Set<String> = [".git", ".build", "DerivedData", "node_modules"]
+    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+    guard let enumerator = FileManager.default.enumerator(
+      at: source, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles])
+    else { throw StreamError(message: "作業元フォルダを読み取れません。") }
+    while let item = enumerator.nextObject() as? URL {
+      let relativePath = item.path.replacingOccurrences(of: source.path + "/", with: "")
+      if ignoredNames.contains(item.lastPathComponent) {
+        enumerator.skipDescendants()
+        continue
+      }
+      let values = try item.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+      if values.isSymbolicLink == true { continue }
+      let target = destination.appending(path: relativePath, directoryHint: values.isDirectory == true ? .isDirectory : .notDirectory)
+      if values.isDirectory == true {
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+      } else {
+        try FileManager.default.copyItem(at: item, to: target)
+      }
+    }
   }
 }
 
@@ -6032,6 +6105,11 @@ private struct VibeProjectEditor: View {
   @State private var featureLines: String
   @State private var completionLines: String
   @State private var proposal: VibeBuildProposal?
+  @State private var sourceDirectory: String
+  @State private var buildProvider: AITaskProvider = .codex
+  @State private var buildModel = ""
+  @State private var preparingBuild = false
+  @State private var buildMessage: String?
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -6043,6 +6121,7 @@ private struct VibeProjectEditor: View {
     _featureLines = State(initialValue: project.essentialFeatures.joined(separator: "\n"))
     _completionLines = State(initialValue: project.completionCriteria.joined(separator: "\n"))
     _proposal = State(initialValue: project.proposal)
+    _sourceDirectory = State(initialValue: FileManager.default.homeDirectoryForCurrentUser.path)
   }
 
   var body: some View {
@@ -6105,6 +6184,7 @@ private struct VibeProjectEditor: View {
         }
 
         proposalSection
+        guidedBuildSection
 
         HStack {
           if let delete {
@@ -6126,6 +6206,68 @@ private struct VibeProjectEditor: View {
       }
       .padding(.leading, 14)
       .padding(.bottom, 4)
+    }
+  }
+
+  @ViewBuilder private var guidedBuildSection: some View {
+    if let proposal, proposal.status == .approved {
+      GroupBox(english ? "Guided build" : "ガイド付きビルド") {
+        VStack(alignment: .leading, spacing: 10) {
+          Text(english
+            ? "Onigiri creates an isolated workspace. Your original folder is not changed by this step."
+            : "Onigiriが隔離した作業コピーを作成します。この段階では元のフォルダを変更しません。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          HStack {
+            TextField(english ? "Source folder" : "作業元フォルダ", text: $sourceDirectory)
+              .textFieldStyle(.roundedBorder)
+            Button(english ? "Choose" : "選択", systemImage: "folder") { chooseSourceDirectory() }
+          }
+          HStack {
+            Picker(english ? "Build AI" : "実行AI", selection: $buildProvider) {
+              ForEach(AITaskProvider.allCases) { provider in
+                Text(provider.name).tag(provider)
+              }
+            }
+            .pickerStyle(.menu)
+            TextField(english ? "Model (optional)" : "モデル（任意）", text: $buildModel)
+              .textFieldStyle(.roundedBorder)
+          }
+          HStack {
+            if let buildMessage {
+              Text(buildMessage).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer()
+            Button(english ? "Start isolated build" : "隔離環境でビルド開始", systemImage: "hammer") {
+              Task { await startGuidedBuild() }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(preparingBuild || sourceDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          }
+          if !project.buildRuns.isEmpty {
+            Divider()
+            Text(english ? "Build history" : "ビルド履歴").font(.caption).foregroundStyle(.secondary)
+            ForEach(project.buildRuns.prefix(3)) { run in
+              VStack(alignment: .leading, spacing: 2) {
+                Label("\(run.provider.name) · \(run.status)", systemImage: "hammer")
+                  .font(.caption.bold())
+                Text(run.workspaceDirectory).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Text(run.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+              }
+            }
+          }
+        }
+        .padding(.top, 4)
+      }
+    } else {
+      GroupBox(english ? "Guided build" : "ガイド付きビルド") {
+        Label(
+          english ? "Mark the build proposal as Approved before starting a build." : "実装を始める前に、提案を「確認済み」にしてください。",
+          systemImage: "checkmark.seal")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.vertical, 4)
+      }
     }
   }
 
@@ -6229,6 +6371,69 @@ private struct VibeProjectEditor: View {
     text.split(whereSeparator: { $0.isNewline })
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
+  }
+
+  private func chooseSourceDirectory() {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.prompt = english ? "Choose" : "選択"
+    if panel.runModal() == .OK, let url = panel.url { sourceDirectory = url.path }
+  }
+
+  @MainActor private func startGuidedBuild() async {
+    guard let proposal, proposal.status == .approved else { return }
+    preparingBuild = true
+    buildMessage = english ? "Preparing an isolated workspace…" : "隔離した作業コピーを準備しています…"
+    defer { preparingBuild = false }
+    do {
+      project.essentialFeatures = lines(from: featureLines)
+      project.completionCriteria = lines(from: completionLines)
+      project.proposal = proposal
+      let workspace = try VibeBuildWorkspace.prepare(sourceDirectory: sourceDirectory, projectID: project.id)
+      let prompt = guidedBuildPrompt(proposal: proposal, workspace: workspace)
+      var request = URLRequest(url: OnigiriEndpoint.url("agents/tasks"))
+      request.httpMethod = "POST"
+      request.timeoutInterval = 15
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      request.httpBody = try JSONEncoder().encode(CodexTaskRequest(
+        provider: buildProvider, prompt: prompt, workingDirectory: workspace,
+        model: buildModel.nilIfEmpty, sandboxMode: .workspaceWrite, timeoutSeconds: 1_800))
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+        let apiError = try? JSONDecoder().decode(APIError.self, from: data)
+        throw StreamError(message: apiError?.error ?? "AIタスクを開始できませんでした。")
+      }
+      let task = try JSONDecoder().decode(CodexTaskRecord.self, from: data)
+      project.buildRuns.insert(VibeBuildRun(
+        provider: buildProvider, sourceDirectory: sourceDirectory, workspaceDirectory: workspace,
+        taskID: task.id, status: "実行中", detail: "\(buildProvider.name)が隔離環境で実装しています。"), at: 0)
+      project.status = .active
+      save(project)
+      buildMessage = english ? "Build started in an isolated workspace." : "隔離した作業コピーでビルドを開始しました。"
+    } catch {
+      buildMessage = error.localizedDescription
+    }
+  }
+
+  private func guidedBuildPrompt(proposal: VibeBuildProposal, workspace: String) -> String {
+    let features = proposal.screenPlan.map { "- \($0)" }.joined(separator: "\n")
+    let checks = proposal.dataPlan.map { "- \($0)" }.joined(separator: "\n")
+    return """
+    Work only inside the assigned workspace: \(workspace)
+
+    Implement the approved project proposal below. Inspect the existing project first, make the smallest coherent change, and run the most relevant validation available. Do not modify files outside the workspace. At the end, explain changed files, validation performed, and any remaining follow-up in plain language.
+
+    Goal:
+    \(proposal.overview)
+
+    Planned experience:
+    \(features)
+
+    Completion checks:
+    \(checks)
+    """
   }
 }
 
