@@ -760,6 +760,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var completionCriteria: [String]
   var nextStep: String
   var status: VibeProjectStatus = .draft
+  var proposal: VibeBuildProposal?
   var createdAt: Date = Date()
   var updatedAt: Date = Date()
 
@@ -767,6 +768,64 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     VibeProject(
       title: "", goal: "", audience: "", essentialFeatures: [], constraints: "",
       completionCriteria: [], nextStep: "")
+  }
+}
+
+private enum VibeBuildProposalStatus: String, Codable, CaseIterable, Identifiable {
+  case draft
+  case ready
+  case approved
+
+  var id: String { rawValue }
+
+  func title(english: Bool) -> String {
+    switch self {
+    case .draft: return english ? "Draft" : "下書き"
+    case .ready: return english ? "Needs review" : "要確認"
+    case .approved: return english ? "Approved" : "確認済み"
+    }
+  }
+}
+
+private struct VibeBuildProposal: Codable, Equatable {
+  var overview: String
+  var screenPlan: [String]
+  var dataPlan: [String]
+  var changeScope: [String]
+  var openQuestions: [String]
+  var status: VibeBuildProposalStatus = .ready
+  var createdAt: Date = Date()
+  var updatedAt: Date = Date()
+
+  static func make(from project: VibeProject, english: Bool) -> VibeBuildProposal {
+    let featurePlans = project.essentialFeatures.isEmpty
+      ? [english ? "Confirm the first feature to build." : "最初に作る機能を確認する。"]
+      : project.essentialFeatures.map { feature in
+        english ? "Provide a simple way to \(feature)." : "「\(feature)」を迷わず操作できる形にする。"
+      }
+    let completion = project.completionCriteria.isEmpty
+      ? [english ? "Define a concrete completion check." : "具体的な完成確認を決める。"]
+      : project.completionCriteria
+    var questions: [String] = []
+    if project.audience.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      questions.append(english ? "Who will use this first?" : "最初に使うのは誰ですか？")
+    }
+    if project.constraints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      questions.append(english ? "Are there platform, privacy, or budget constraints?" : "利用環境、プライバシー、予算などの制約はありますか？")
+    }
+    if project.completionCriteria.isEmpty {
+      questions.append(english ? "What should be demonstrated before calling it complete?" : "完成と判断するために、何を実演できればよいですか？")
+    }
+    return VibeBuildProposal(
+      overview: english
+        ? "Build \(project.title.isEmpty ? "this project" : project.title) so that \(project.goal)"
+        : "「\(project.title.isEmpty ? "このプロジェクト" : project.title)」で、\(project.goal)を実現する。",
+      screenPlan: featurePlans,
+      dataPlan: completion,
+      changeScope: project.constraints.isEmpty
+        ? [english ? "Keep the first build small and focused on the essentials." : "初回は必須機能に絞り、変更範囲を小さく保つ。"]
+        : [english ? "Respect: \(project.constraints)" : "制約・希望を守る: \(project.constraints)"],
+      openQuestions: questions)
   }
 }
 
@@ -5972,6 +6031,7 @@ private struct VibeProjectEditor: View {
   @State private var project: VibeProject
   @State private var featureLines: String
   @State private var completionLines: String
+  @State private var proposal: VibeBuildProposal?
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -5982,6 +6042,7 @@ private struct VibeProjectEditor: View {
     _project = State(initialValue: project)
     _featureLines = State(initialValue: project.essentialFeatures.joined(separator: "\n"))
     _completionLines = State(initialValue: project.completionCriteria.joined(separator: "\n"))
+    _proposal = State(initialValue: project.proposal)
   }
 
   var body: some View {
@@ -6043,6 +6104,8 @@ private struct VibeProjectEditor: View {
           .padding(.top, 4)
         }
 
+        proposalSection
+
         HStack {
           if let delete {
             Button(english ? "Delete project" : "プロジェクトを削除", systemImage: "trash", role: .destructive) {
@@ -6053,6 +6116,7 @@ private struct VibeProjectEditor: View {
           Button(english ? "Save project" : "プロジェクトを保存", systemImage: "checkmark") {
             project.essentialFeatures = lines(from: featureLines)
             project.completionCriteria = lines(from: completionLines)
+            project.proposal = proposal
             save(project)
           }
           .buttonStyle(.borderedProminent)
@@ -6062,6 +6126,85 @@ private struct VibeProjectEditor: View {
       }
       .padding(.leading, 14)
       .padding(.bottom, 4)
+    }
+  }
+
+  @ViewBuilder private var proposalSection: some View {
+    GroupBox(english ? "Build proposal" : "実装提案") {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Text(english
+            ? "Review this before an AI starts changing files."
+            : "AIにファイル変更を依頼する前に、ここで内容を確認します。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Spacer()
+          if let proposal {
+            Picker(english ? "Review" : "確認", selection: Binding(
+              get: { proposal.status },
+              set: { newValue in
+                var updated = proposal
+                updated.status = newValue
+                updated.updatedAt = Date()
+                self.proposal = updated
+              })) {
+                ForEach(VibeBuildProposalStatus.allCases) { status in
+                  Text(status.title(english: english)).tag(status)
+                }
+              }
+              .pickerStyle(.menu)
+          }
+          Button(proposal == nil ? (english ? "Create proposal" : "提案を作成") : (english ? "Refresh proposal" : "提案を更新"), systemImage: "wand.and.stars") {
+            var source = project
+            source.essentialFeatures = lines(from: featureLines)
+            source.completionCriteria = lines(from: completionLines)
+            proposal = VibeBuildProposal.make(from: source, english: english)
+          }
+        }
+
+        if let proposal {
+          proposalCard(english ? "Summary" : "概要", proposal.overview)
+          proposalList(english ? "Planned experience" : "作る体験・機能", proposal.screenPlan)
+          proposalList(english ? "Completion checks" : "完成確認", proposal.dataPlan)
+          proposalList(english ? "Scope and constraints" : "変更範囲と制約", proposal.changeScope)
+          if !proposal.openQuestions.isEmpty {
+            proposalList(english ? "Questions to settle" : "実装前に確認したいこと", proposal.openQuestions, symbol: "questionmark.circle")
+          }
+          Text(english
+            ? "The proposal is saved together with the project when you save the project."
+            : "提案は、プロジェクトを保存すると一緒に保存されます。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else {
+          ContentUnavailableView(
+            english ? "No proposal yet" : "提案はまだありません",
+            systemImage: "doc.text.magnifyingglass",
+            description: Text(english
+              ? "Save the goal details, then create a proposal you can review."
+              : "目標の内容を入力してから、確認用の提案を作成してください。"))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+      }
+      .padding(.top, 4)
+    }
+  }
+
+  private func proposalCard(_ title: String, _ value: String) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title).font(.caption).foregroundStyle(.secondary)
+      Text(value).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+    }
+  }
+
+  private func proposalList(_ title: String, _ entries: [String], symbol: String = "checkmark.circle") -> some View {
+    VStack(alignment: .leading, spacing: 5) {
+      Text(title).font(.caption).foregroundStyle(.secondary)
+      ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+        Label(entry, systemImage: symbol)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .textSelection(.enabled)
+      }
     }
   }
 
