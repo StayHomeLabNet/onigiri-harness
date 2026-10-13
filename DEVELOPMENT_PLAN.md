@@ -1,447 +1,196 @@
 # Onigiri Harness 開発計画
 
-更新日: 2026-10-05
+更新日: 2026-10-13
+
+## 製品の方向性
+
+Onigiri Harnessは、コーディング・エージェントを操作するためのアプリではありません。作りたいものを日常語で伝えると、要件を一緒に整理し、提案を確認し、安全な作業場所で実装・検証し、分かりやすい変更内容として受け取れる **ローカルファーストのVibe Build環境** です。
+
+Codex、Antigravity、Claude Code、ローカルLLMは、この体験を実現するための実行手段です。利用者がCLI、モデル名、Gitの細部を常に理解している必要はありません。資料、Webリサーチ、回答根拠、回帰試験は、作るものと変更内容を信頼して判断するための共通基盤として扱います。
 
 ## フェーズ表記
 
-今後の開発計画、作業依頼、完了報告では、次の表記に統一します。
-
 - **Parent Phase**: 製品としての大きな到達点
 - **Sub-phase**: Parent Phaseを完成させる実装単位
-- 表記例: `Parent Phase 1 / Sub-phase 1.3 — RAG Modes`
-- `Phase`だけの表記は新しい計画では使用しない
+- 表記例: `Parent Phase 2 / Sub-phase 2.2 — Build Proposal`
 
-これまで使用してきた0〜35の連番は、過去の実装履歴を識別する場合に限り`Legacy Phase`と表記します。Legacy Phase番号は、新しいParent Phase／Sub-phase番号の進捗を意味しません。
+以前の番号は実装履歴としてのみ参照します。今後の作業依頼と完了報告は、以下の計画のParent Phase / Sub-phaseを使用します。
 
-## 現在地
+## 全体像と現在地
 
-現在は、基盤、複数provider、Product Profiles、Chat Runtime、共通RAG、複数CLIのAIタスク／通常チャット連携、Decision Model Lab、OpenAI Compatibility API、セキュリティ、データ移行、最終手動受入、再現可能なビルドとCIまで実装済みです。GitHubではソースコードを公開し、未署名macOSバイナリは一般配布しません。
-
-| Parent Phase | 状態 | 概要 |
+| Parent Phase | 状態 | 到達点 |
 | --- | --- | --- |
-| Parent Phase 0 — Foundation & Runtime | 完了 | Skeleton、Chat、provider、Profiles、Context Builderを実装済み |
-| Parent Phase 1 — Common RAG Platform | 完了 | Simple／Agentic RAG、評価、診断、カバレッジ管理を実装済み |
-| Parent Phase 2 — AI Agent Integration | 完了 | Codex inbound／MCPと、Codex・Antigravity・Claude CodeのAIタスクを実装済み |
-| Parent Phase 3 — Decision Models & Experiments | 完了 | Decision Model Lab、比較評価、confidence routingを実装済み |
-| Parent Phase 4 — Local AI Gateway | 完了 | OpenAI Compatibility APIとCLI Chat Providersを実装済み |
-| Parent Phase 5 — Productization | 進行中 | 5.1系、5.2a、5.2b、5.2dを完了。次は公開後検証 |
-| Parent Phase 6 — Evidence & Replay | 進行中 | 回答条件の記録と反実仮想の比較実行を実装中 |
-
-次に着手するのは **Parent Phase 5 / Sub-phase 5.2e — Public Launch Verification** です。
-
-## Legacy Phaseとの対応
-
-| 当初・過去の段階 | 新しい位置 | 状態 |
-| --- | --- | --- |
-| Legacy Phase 0 — Skeleton | Parent Phase 0 / Sub-phase 0.1 | 完了 |
-| Legacy Phase 1 — Chat | Parent Phase 0 / Sub-phase 0.2、0.5 | 完了 |
-| Legacy Phase 2 — Provider | Parent Phase 0 / Sub-phase 0.3 | 完了 |
-| 旧計画のProfiles | Parent Phase 0 / Sub-phase 0.4 | 完了 |
-| 旧計画のSimple RAG | Parent Phase 1 / Sub-phase 1.1、1.2 | 完了・拡張済み |
-| Legacy Phase 11〜35 | 主にParent Phase 1 / Sub-phase 1.1、1.2 | 資料管理、検索、引用、評価として完了 |
-| 旧計画のAgentic RAG | Parent Phase 1 / Sub-phase 1.4〜1.5 | 完了 |
-| 旧計画のCodex outbound | Parent Phase 2 / Sub-phase 2.1 | 完了 |
-| 旧計画のCodex inbound | Parent Phase 2 / Sub-phase 2.2 | 完了 |
-| CodexタスクのAIタスク統合 | Parent Phase 2 / Sub-phase 2.3 | 完了 |
-| 旧計画のJev Lab | Parent Phase 3 / Sub-phase 3.1 | 完了・Decision Model Labへ拡張 |
-| 旧計画のCompatibility API | Parent Phase 4 / Sub-phase 4.1 | 完了 |
-| CLIを通常チャットのモデルとして利用 | Parent Phase 4 / Sub-phase 4.2 | 完了 |
-
-## 目標構成
-
-```mermaid
-flowchart TB
-    App[SwiftUI App]
-    Server[Harness Server]
-    Core[Harness Core]
-    Profiles[Profile Manager]
-    Context[Context Builder]
-    RAG[RAG Manager]
-    Router[Model Router]
-    Agent[Agent Manager]
-    Experiments[Experiments]
-    Apple[Apple FM]
-    LM[LM Studio]
-    Ollama[Ollama]
-    CLIAgents[Codex / Antigravity / Claude Code]
-    DecisionModels[Jev / Ollaya / TypeSafe-compatible]
-    Clients[OpenAI-compatible Clients]
-
-    App -->|HTTP| Server
-    Clients -->|Compatibility API| Server
-    Server --> Core
-    Core --> Profiles
-    Profiles --> Context
-    Context --> RAG
-    Context --> Router
-    Router --> Apple
-    Router --> LM
-    Router --> Ollama
-    Router --> CLIAgents
-    Core --> Agent
-    Agent --> RAG
-    Agent --> CLIAgents
-    Core --> Experiments
-    Experiments --> DecisionModels
-```
-
-RAG Managerは特定モデルに属さない共通資産とします。Apple FM、LM Studio、Ollama、Codex、Antigravity、Claude Codeが同じ検索・引用・評価基盤を利用できる構造を維持します。
-
-## Parent Phase 0 — Foundation & Runtime
-
-### Sub-phase 0.1 — Skeleton
-
-状態: 完了
-
-SwiftUI → HTTP → Harness Server → Harness Core → Apple FMという最小往復を確立しました。
-
-### Sub-phase 0.2 — Chat Base
-
-状態: 完了
-
-メッセージモデル、複数ターン、Streaming、会話保存、エラー表示を実装しました。生成停止とキャンセル制御はSub-phase 0.5で完成しました。
-
-### Sub-phase 0.3 — Model Providers
-
-状態: 完了
-
-`ModelProvider`を共通化し、Apple FM、LM Studio、Ollama、任意のOpenAI-compatibleローカルモデルを切り替えられるようにしました。
-
-### Sub-phase 0.4 — Product Profiles
-
-状態: 完了
-
-モデル設定、Base URL、Model ID、システム指示、RAGモード、検索設定、コンテキスト上限を1つのProfileとして保存するようにしました。作成、複製、名称変更、削除、既定Profile指定、会話ごとのProfile選択をUIから行えます。現在の`@AppStorage`設定は初回Profileへ移行します。
-
-完了条件:
-
-- `general`、`apple-local`、任意のローカルモデルProfileを作成できる
-- Profile切替でモデル、指示、RAG設定が一括で切り替わる
-- 再起動後もProfileと会話への割り当てが復元される
-- 既存設定からの移行で会話、資料、評価データが失われない
-
-### Sub-phase 0.5 — Chat Runtime & Context Builder
-
-状態: 完了
-
-会話履歴、システム指示、資料、選択チャンク、言語・書き換え指示を組み立てるContext BuilderをCore内の独立要素にしました。生成停止、HTTP切断時のキャンセル、コンテキスト予算、履歴圧縮方針もここで統一しています。
-
-完了条件:
-
-- UIの停止ボタンでApple FMとローカルモデルの生成を中断できる
-- 中断後に同じ会話で再送信できる
-- Context Builderの入力と出力を単体テストできる
-- モデル変更後も同じコンテキスト方針が適用される
-
-## Parent Phase 1 — Common RAG Platform
-
-### Sub-phase 1.1 — Simple RAG
-
-状態: 完了
-
-TXT、Markdown、PDF、フォルダ取込、チャンク分割、Keyword・日本語n-gram・Embedding検索、Top K、引用、永続化、資料プレビューを実装しました。
-
-### Sub-phase 1.2 — RAG Operations & Evaluation
-
-状態: 完了
-
-Legacy Phase 21〜35で、チャンク管理、検索設定、手動選択、評価ケース、評価環境、回帰検出、自動評価、スイート、資料版、カバレッジ、候補生成を実装しました。
-
-### Sub-phase 1.3 — RAG Modes & RAG Manager
-
-状態: 完了
-
-RAG処理を正式なRAG Managerへ分離し、Profileごとの`disabled`と`always`を共通の実行モードとして完成させました。会話と評価結果に使用モードを記録し、次の`agentic`モードが利用する`searchKnowledge`と`getKnowledgeChunk`のモデル非依存Tool契約とHTTP APIを定義しました。既存の`knowledge.json`と過去の評価データは引き続き読み込めます。
-
-完了条件:
-
-- `disabled`では資料がプロンプトへ入らない
-- `always`では現在と同等以上の検索・引用が動く
-- モード変更が会話と評価レポートへ記録される
-- `searchKnowledge`と`getKnowledgeChunk`をモデル非依存のToolとして呼べる
-
-### Sub-phase 1.4 — Agentic RAG
-
-状態: 完了
-
-AIが質問ごとに検索要否、検索語、再検索語をJSONで判断する実行ループを追加しました。検索は共通のRAG Managerを最大2回呼び出し、弱い結果だけを5秒以内で再検索します。取得数はProfileの上限に従います。構造化された判断を返せないモデルでは`always`へフォールバックします。判断理由、検索語、Tool回数、所要時間、取得チャンクを会話へ記録し、UIとMarkdownで確認できます。
-
-完了条件:
-
-- 資料不要の質問では検索を行わない
-- 資料が必要な質問では検索語を生成して根拠付きで回答する
-- 検索結果が弱い場合に上限内で再検索できる
-- Tool判断、検索語、取得チャンク、引用を追跡できる
-- Apple FM、LM Studio、Ollamaで同じRAGモード契約が動く
-
-### Sub-phase 1.5 — Agentic Evaluation & RAG Diagnostics
-
-状態: 完了
-
-既存の評価基盤をAgentic RAGへ接続しました。ケースごとに検索要否を設定し、検索判断の適合率・再現率、誤検索、検索漏れ、再検索による回復を測定します。検索語不足、閾値、Keyword／Embedding配分、チャンク境界を原因候補として表示します。全資料の未評価チャンクからケース候補を一括生成でき、評価環境にはRAGモードも保存してProfile・モデル・モードを分けて比較できます。CLIでも`--rag-mode`を指定できます。
-
-完了条件:
-
-- 検索要否の適合率・再現率を測定できる
-- 検索語不足、分割設定、閾値、Keyword／Embedding配分を原因候補として表示する
-- カバレッジの弱い資料から評価ケースを一括生成できる
-- Profile、RAGモード、モデル間の回帰を比較できる
-
-## Parent Phase 2 — AI Agent Integration
-
-### Sub-phase 2.1 — Codex Outbound
-
-状態: 完了
-
-Agent ManagerとCodex CLI Adapterを追加し、Harnessから明示的にCodexへ単発タスクを渡せるようにしました。タスク画面では作業フォルダ、任意のモデル、読み取り専用／作業フォルダ書き込み、タイムアウトを指定できます。JSONLイベントから進行状況と最終結果を取り込み、入力、結果、失敗、キャンセル、タイムアウトを会話とは別の実行記録として最大100件保存します。
-
-完了条件:
-
-- UIからCodexタスクを開始できる
-- タスクの進行、完了、失敗を表示できる
-- 会話本文とCodex実行履歴を分けて保存できる
-- キャンセルとタイムアウトが機能する
-
-### Sub-phase 2.2 — Codex Inbound / MCP
-
-状態: 完了
-
-OnigiriのRAGをCodexから利用できるstdio MCP Server `onigiri-mcp`として公開しました。`searchKnowledge`と`getKnowledgeChunk`には入力スキーマと読み取り専用注釈を付け、資料追加・削除などの変更操作は公開していません。Tool呼び出しは入力概要、成否、所要時間、結果数とともに最大500件保存し、アプリのMCP画面から確認・クリアできます。
-
-完了条件:
-
-- Codexから資料検索とチャンク取得ができる
-- 引用可能な資料ID、チャンクID、タイトルが返る
-- 読み取り操作と変更操作の権限が分離される
-- Tool呼び出しを監査ログで確認できる
-
-### Sub-phase 2.3 — Multi-CLI Agent Adapters
-
-状態: 完了
-
-従来の「Codexタスク」を「AIタスク」へ統合し、Codex、Google Antigravity、Claude Codeを同じ画面とAPIから選択できるようにしました。各CLIは専用AdapterでコマンドとStreaming JSONを変換し、共通Managerが進行、結果、失敗、キャンセル、タイムアウト、履歴を管理します。タスクごとに独立したプロセスを起動するため、複数providerを同時実行できます。旧APIとproviderのない旧履歴はCodexとして引き続き読み込めます。
-
-完了条件:
-
-- AIタスク画面でCodex、Antigravity、Claude Codeを選択できる
-- 利用可能性、実行AI、モデル、アクセス設定を確認できる
-- 異なるCLIを含む複数タスクを同時実行できる
-- providerのない旧Codex履歴をCodexとして自動移行できる
-- 利用できないCLIは他のCLIの実行を妨げず、画面に状態を表示する
-
-## Parent Phase 3 — Decision Models & Experiments
-
-### Sub-phase 3.1 — Decision Model Lab
-
-状態: 完了
-
-Jev専用ではなく、複数のJevライクな意思決定モデルを差し替えられるDecision Model Labを追加しました。OllayaローカルAPIとTypeSafe互換APIをProviderとして分離し、モデル一覧を動的に取得します。状態はテキストまたはJSON、質問は`choice`、`score`、`noul`へ正規化します。確率、confidence、routing、処理時間を含む生レスポンスと失敗を通常Profile・会話・RAGから独立して最大200件保存します。APIキーは履歴へ保存しません。
-
-完了条件:
-
-- Jev、Ollaya、TypeSafe互換Providerを同じ実験形式で扱える
-- Ollaya内のモデルファミリーをコード変更なしで列挙・選択できる
-- 実験ごとに状態、質問、Provider、モデル、結果、失敗を保存・比較できる
-- APIキーを履歴へ保存せず、実験APIの失敗を通常処理から隔離できる
-- 意思決定結果から外部操作を自動実行しない
-
-### Sub-phase 3.2 — Decision Evaluation & Routing Policies
-
-状態: 完了
-
-ラベル付き評価ケースを作成し、同じケースを複数モデルで実行して正解率、calibration error、遅延、完了数、fallback率を比較できるようにしました。既定およびモデル別・質問別のconfidence閾値とfallback先を設定できます。低confidence時のLLM／人へのfallbackはレポートへ記録するシミュレーションで、外部操作は行いません。評価レポートは通常の実験履歴から分離して最大100件保存し、ProviderのAPIキーは保存しません。
-
-完了条件:
-
-- 同じ評価セットを複数の意思決定モデルで実行できる
-- accuracy、calibration error、遅延を比較できる
-- モデル別・質問別のconfidence閾値を保存できる
-- local decision → LLM／人のfallbackをシミュレーションできる
-- 自動実行前に判断根拠と適用policyを監査できる
-
-### Sub-phase 3.3 — Decision Model Comparison & Presets
-
-状態: 完了
-
-日常的な意思決定入力を名前付きプリセットとして保存・再利用できるようにしました。複数モデルを選ぶと、同じ状態と質問を順番に実行し、応答・確信度・確率・遅延を既存の履歴で比較できます。比較は外部操作を伴わない観察専用です。
-
-完了条件:
-
-- 状態と質問を入力プリセットとして保存・再適用できる
-- 同一条件を複数モデルへ実行できる
-- 各モデルの結果を通常の実験履歴で追跡できる
-- 比較実行が外部操作を自動実行しない
-
-## Parent Phase 4 — Local AI Gateway
-
-### Sub-phase 4.1 — Compatibility API
-
-状態: 完了
-
-Harness ServerにOpenAI-compatibleな`/v1/models`と`/v1/chat/completions`を公開しました。非StreamingとSSE Streamingに対応し、`model`から現在モデル、ロード済みモデル、`profile/<UUID>`を選択できます。標準レスポンスへ影響しない`onigiri`拡張にRAGモード、引用、Agentic RAG traceを格納します。リクエスト単位のProfile／モデル選択はアプリの現在Providerや会話セッションを変更しません。`/v1/embeddings`は、共通APIとして公開する認証・上限・用途が未確定のため、このSub-phaseでは追加していません。
-
-完了条件:
-
-- 非StreamingとStreamingのChat Completionsが動く
-- ProfileまたはモデルをAPIから選択できる
-- RAGモードと引用情報を互換性を壊さず扱える
-- 既存のOnigiri独自APIが引き続き動く
-
-### Sub-phase 4.2 — AI CLI Chat Providers
-
-状態: 完了
-
-Codex、Google Antigravity、Claude CodeのCLI Adapterを`ModelProvider`としても利用できるようにしました。アプリ上部のモデル選択から通常チャットへ切り替えられ、Product Profile、会話文脈、RAG、Compatibility APIの共通経路を使います。CLI Chatは専用の空作業フォルダと読み取り専用モードで実行し、モデルIDが空欄なら各CLIのアカウント既定値を使用します。CLIごとのモデルカタログはログイン状態とバージョンで変わるため、モデルIDは自由入力です。
-
-完了条件:
-
-- モデル選択にCodex、Antigravity、Claude Codeを表示できる
-- 導入・ログイン済みCLIは通常チャットの回答を返せる
-- 未導入CLIは他Providerを妨げず、利用不可理由を表示できる
-- CLI Chatが読み取り専用の専用作業フォルダで動作する
-- Profile、会話文脈、RAG、停止処理を既存Chat Runtimeと共有できる
-
-## Parent Phase 5 — Productization
-
-### Sub-phase 5.1 — Security, Reliability & Migration
-
-状態: 完了
-
-ローカルGateway、MCP、AIタスク連携の境界を固めました。Serverは既定でloopbackだけをlistenし、外部待受は環境変数による明示許可とBearer tokenの両方がなければ起動しません。Decision LabのAPI keyはmacOS Keychainへ保存できます。保存領域にはversion metadataを追加し、初回移行前の安全コピー、チェックサム付き一括バックアップ、復元前のロールバックコピー、JSON破損診断と破損ファイル保全を実装しました。AIタスクの書き込みモードはsymlink解決後の実在・書き込み権限を検査し、ルートフォルダを拒否します。
-
-完了条件:
-
-- 外部公開を明示的に有効化しない限りloopback限定になる
-- APIキーなどを平文ファイルへ保存しない
-- 会話、Profile、資料、評価データをバックアップ・復元できる
-- 旧データを自動移行し、失敗時に元へ戻せる
-
-### Sub-phase 5.1a — Release-blocking Fixes
-
-状態: 完了
-
-受入試験で検出したApple Foundation Modelsの生成失敗、Agentic RAG再検索によるprimary一致の脱落、本文とmetadataの引用番号不一致、追従変換への不要な引用引き継ぎ、Antigravity headless実行の汎用結果を修正しました。自動テスト82件、アプリビルド、署名検証、Apple Foundation ModelsとAntigravityの隔離実動作確認に合格しています。
-
-完了条件:
-
-- Apple Foundation Modelsで生成でき、生のSensitiveContentAnalysisMLエラーを利用者へ露出しない
-- Agentic RAGのretry後もprimary最上位一致を保持する
-- 回答本文の引用番号とmetadataを一致させ、追従変換へ無関係な引用を付けない
-- Antigravityの読み取り専用headlessタスクが具体的な結果を返す
-
-### Sub-phase 5.1b — Final Manual Acceptance
-
-状態: 計画済み
-
-Release blocker解消後の最終受入です。Profileの保存と再起動復元、停止・Markdown書出し・削除、指定ウインドウサイズとライト外観、キーボード操作、横スクロール表示、規定回数の再起動を実UIで確認します。削除操作は対象を明示して実行直前に確認します。
-
-完了条件:
-
-- 残るP0／P1受入項目がすべてPASSまたは環境理由を記録したSKIPPEDになる
-- 標準サイズ、指定サイズ、ライト／ダークで操作不能なUI崩れがない
-- 会話の停止、書出し、履歴復元を実UIで確認する
-- 配布判定に残る既知問題と制約を確定する
-
-### Sub-phase 5.2 — GitHub Publication & Release Engineering
-
-状態: 進行中
-
-GitHubでApache-2.0のソースコードを公開し、第三者がclone、テスト、ローカルビルドできる状態を整えます。Apple Developer Programへ加入していない間は未署名macOSバイナリをGitHub Releasesへ掲載しません。Developer ID署名・公証の自動化は将来の任意対応として保持します。
-
-作業区分:
-
-- Sub-phase 5.2a — Repository Readiness（完了）: `StayHomeLabNet/onigiri-harness`をPrivateで作成し、`main`へ初回commitをpush。Apache-2.0、除外規則、秘密情報検査、README、貢献／セキュリティ文書、Issue／Pull Requestテンプレートを整備済み
-- Sub-phase 5.2b — Reproducible Build & CI（完了）: `VERSION`を単一のversion源とし、クリーンbuild directoryでのReleaseビルド、標準化したZIP名、SHA-256、公開前検査を実装。GitHub ActionsはmacOS 26 ARM64／Xcode 26.6でテスト・ビルド・成果物検証を行い、Git履歴を含む秘密情報検査を行う
-- Sub-phase 5.2c — Signed macOS Distribution（任意・保留）: Developer ID署名、Hardened Runtime、公証、staple、ZIP、Gatekeeper検証の自動化は実装済み。Apple Developer Programへ加入する場合だけ実行する
-- Sub-phase 5.2d — GitHub Source Publication（完了）: 公開前検査とCIに合格後、`StayHomeLabNet/onigiri-harness`をPublicへ変更。Private vulnerability reporting、README・ライセンス・貢献導線、認証なしのfresh cloneを確認済み。GitHub Releaseを作る場合は当面ソースアーカイブだけを扱う
-- Sub-phase 5.2e — Public Launch Verification: 公開リポジトリからのclone、ビルド、インストール、初回会話、RAG、更新・ロールバック手順を第三者視点で確認
-- Sub-phase 5.2s — Detached Web Research Window（完了）: Webリサーチを別ウインドウで開き、チャットを中断せずに閲覧・検索・ブックマークできるようにする。選択したWebページはメインウインドウの次の質問へ共有する
-
-Sub-phase 5.2eの公開前UI確認では、資料全消去後の会話コンテキストを分離し、資料0件時の所持確認へ決定的に回答する処理を追加しました。日本語IMEの変換確定Enterと送信Enterを分離し、Shift+Enter改行も維持しています。メニューバーの設定画面から日本語／英語を即時切替できるローカライズ基盤と、配布アプリへの言語リソース同梱も追加しました。
-
-完了条件:
-
-- 初回設定から最初の会話・資料検索まで案内される
-- 主要providerのスモークテストが成功する
-- 診断情報から秘密情報を除外して書き出せる
-- 公開GitHubリポジトリをクリーンcloneしてテストとアプリビルドを再現できる
-- ライセンス、CONTRIBUTING、SECURITY、Issue／Pull Requestテンプレートが公開される
-- CIがテスト、ビルド、秘密情報・不要ファイル検査に合格する
-- GitHubの公開ソースからローカル用アプリを再現できる
-- 公開履歴にAPIキー、個人資料、会話、ローカルパス、バックアップが含まれない
-
-## Parent Phase 6 — Evidence & Replay
-
-### Sub-phase 6.1 — Evidence & Replay Lab
-
-状態: 完了
-
-各回答へFlight Recorderを付与し、質問、直前の会話履歴、実行日時、Profile、Provider、モデル、RAG設定、コンテキスト上限、引用、Agentic RAGの検索判断を保存します。根拠・再現画面では、回答時の条件を確認し、比較先のProfileとRAGモードを指定して同じ入力をOpenAI互換Gateway経由で独立再実行できます。再実行結果、根拠、遅延は元の回答に保存され、通常の会話履歴や現在のProfileを変更しません。
-
-完了条件:
-
-- 回答ごとに実行条件と根拠を後から確認できる
-- 同じ質問と会話履歴を独立した実験として再実行できる
-- ProfileまたはRAGモードを変えた結果を保存・比較できる
-- 再実行が通常の会話や現在のProfileを変更しない
-
-### Sub-phase 6.2 — Evidence Regression Suites
-
-状態: 完了
-
-重要な質問をEvidence Regression Suiteへ基準ケースとして登録し、ProfileとRAGモードの組み合わせを比較条件として保存します。スイートは全ケース・全条件を独立実行し、回答本文、引用、Agentic RAGの検索判断、遅延を前回レポートと比較します。初回はベースラインを保存し、以後は変化した項目だけを表示します。
-
-完了条件:
-
-- 回答から基準ケースを作成し、スイートとして保存できる
-- ProfileとRAGモードを比較条件として複数登録できる
-- 全ケース・全条件を一括実行できる
-- 回答、引用、検索判断、遅延の変化を前回実行と比較できる
-- スイートとレポートをローカルへ保存し、通常会話を変更しない
-
-### Sub-phase 6.3 — Regression Policies & Reports
-
-状態: 完了
-
-スイートごとに回帰ポリシーを設定できるようにしました。回答本文の変化は情報として残し、引用の消失、検索判断の変化、設定した時間・倍率を超える遅延増加を「失敗」「要確認」「情報」へ分類します。直近レポートには合格・要確認・失敗・情報の集計を表示し、全エントリー、根拠、差分、回答本文をMarkdownまたはCSVで書き出せます。
-
-完了条件:
-
-- 引用消失、検索判断、遅延の分類をスイートごとに設定できる
-- 回答本文の変化を失敗として自動扱いしない
-- 合格・要確認・失敗・情報の集計を表示できる
-- レポートをMarkdownとCSVへ書き出せる
-
-## 実装順序と依存関係
+| **0 — Local AI Foundation** | 実装済み | 会話、Profile、複数モデル、保存、停止、コンテキスト構築 |
+| **1 — Grounded Knowledge & Evidence** | 実装済み | 共通RAG、資料管理、引用、評価、根拠記録、再現・回帰確認 |
+| **2 — Vibe Build Workspace** | 次に着手 | 自然言語の企画から、提案、実装、確認可能な適用までを一貫化 |
+| **3 — Decision Lab** | 実装済み | Jev類似モデルの実験、比較、評価、ルーティング検討 |
+| **4 — Local AI Gateway** | 実装済み | OpenAI互換APIとCLIベースの通常チャット |
+| **5 — Trust, Web & Distribution** | 大部分実装済み | 安全性、移行、Webリサーチ、アクセシビリティ、公開・CI |
+| **6 — Continuous Quality** | 一部実装済み | Evidence Regressionは実装済み。Headless実行とCI判定が次の候補 |
+
+次に実装する候補は、**Parent Phase 2 / Sub-phase 2.1 — Project Brief & Intent Canvas** です。以後のVibe Build機能は、利用者の要望を「AIタスク」へ直接投げる前に、目的・対象ユーザー・制約・完成条件として整理するところから始めます。
 
 ```mermaid
 flowchart LR
-    P04[Sub-phase 0.4 Profiles]
-    P05[Sub-phase 0.5 Context Builder]
-    P13[Sub-phase 1.3 RAG Modes]
-    P14[Sub-phase 1.4 Agentic RAG]
-    P15[Sub-phase 1.5 Agentic Evaluation]
-    P21[Sub-phase 2.1 Codex Outbound]
-    P22[Sub-phase 2.2 Codex Inbound]
-    P23[Sub-phase 2.3 Multi-CLI Agents]
-    P31[Sub-phase 3.1 Decision Model Lab]
-    P32[Sub-phase 3.2 Decision Evaluation]
-    P41[Sub-phase 4.1 Compatibility API]
-    P42[Sub-phase 4.2 CLI Chat Providers]
-    P51[Sub-phase 5.1 Hardening]
-    P52[Sub-phase 5.2 Release]
-
-    P04 --> P05 --> P13 --> P14 --> P15 --> P21 --> P22 --> P23 --> P31 --> P32 --> P41 --> P42 --> P51 --> P52
+    A[作りたいものを日常語で入力] --> B[意図と要件を整理]
+    B --> C[画面・機能・変更案を確認]
+    C --> D[安全な作業場所で実装]
+    D --> E[テストと根拠を確認]
+    E --> F[変更を確認して適用または戻す]
+    K[資料・Webリサーチ] --> B
+    R[Evidence / Regression] --> E
+    M[Codex / Antigravity / Claude Code / Local Models] --> D
 ```
 
-Parent Phase 0と1でCoreの責務を固めてから外部連携へ進みます。AIタスク、意思決定モデル、Compatibility APIは個別のRAG実装を持たず、同じProfile、Context Builder、RAG Manager、評価基盤を共有します。
+## Parent Phase 0 — Local AI Foundation
 
-## 実装原則
+状態: **実装済み**
 
-- 開発計画と進捗報告ではParent Phase／Sub-phaseを必ず併記する
-- UI、HTTP、Core、providerの依存方向を維持する
-- モデル固有処理をRAG ManagerやProfile Managerへ混ぜない
-- 新しい保存形式にはバージョンと移行処理を用意する
-- 自動判断には上限、キャンセル、監査可能な記録を付ける
-- 各Sub-phaseは完了条件をテストしてから次へ進む
-- 既存の会話、資料、評価データとの後方互換性を維持する
+ローカルmacOSアプリとして、モデルを交換しても同じ会話体験を維持する土台です。
+
+| Sub-phase | 状態 | 内容 |
+| --- | --- | --- |
+| 0.1 — Skeleton | 実装済み | SwiftUI、HTTP、Harness Server、Harness Core、Apple Foundation Modelsの最小往復 |
+| 0.2 — Chat Base | 実装済み | 複数ターン、Streaming、会話履歴、エラー表示、書き出し |
+| 0.3 — Model Providers | 実装済み | Apple FM、LM Studio、Ollama、OpenAI互換ローカルモデルの共通Provider |
+| 0.4 — Product Profiles | 実装済み | モデル、指示、RAG、検索、コンテキスト設定をProfileとして保存・切替 |
+| 0.5 — Chat Runtime & Context Builder | 実装済み | 会話・指示・資料を一貫して組み立て、停止・圧縮・上限を管理 |
+
+## Parent Phase 1 — Grounded Knowledge & Evidence
+
+状態: **実装済み**
+
+特定モデルに依存しない知識基盤です。資料がない時には資料があるように振る舞わず、利用した資料と検索判断を確認できることを基本契約にします。
+
+| Sub-phase | 状態 | 内容 |
+| --- | --- | --- |
+| 1.1 — Knowledge Ingestion | 実装済み | TXT、Markdown、PDF、フォルダ取込、分割、永続化、資料プレビュー |
+| 1.2 — Search & Citations | 実装済み | Keyword・日本語n-gram・Embedding検索、Top K、引用、検索設定 |
+| 1.3 — RAG Modes & Manager | 実装済み | `disabled`、`always`、モデル共通のRAG ManagerとTool契約 |
+| 1.4 — Agentic RAG | 実装済み | 検索要否、検索語、再検索を判断し、追跡可能な形で実行 |
+| 1.5 — RAG Evaluation & Diagnostics | 実装済み | 検索判断・資料カバレッジ・回帰・原因候補を評価 |
+| 1.6 — Evidence Flight Recorder | 実装済み | 回答時のProfile、モデル、履歴、RAG、引用、遅延を保存 |
+| 1.7 — Counterfactual Replay | 実装済み | 同じ条件を別Profile・RAG設定で独立再実行して比較 |
+| 1.8 — Regression Suites & Reports | 実装済み | 基準ケース、ポリシー、合格・要確認・失敗、Markdown/CSVレポート |
+
+## Parent Phase 2 — Vibe Build Workspace
+
+状態: **次に着手**
+
+「AIにコーディングを依頼する」画面を、「作りたい体験を対話で形にする」ワークスペースへ発展させます。実装中の変更は利用者の作業フォルダへ直ちに適用せず、提案と検証結果を確認できる段階を必ず挟みます。
+
+既存のAIタスク、Codex / Antigravity / Claude Code Adapter、通常チャット連携は、このParent Phaseを開始するための**実装済みの基盤**です。
+
+| Sub-phase | 状態 | 内容 |
+| --- | --- | --- |
+| 2.0 — Agent Execution Foundation | 実装済み | 複数AIのタスク実行、進行表示、取消、タイムアウト、履歴、MCPによるRAG参照 |
+| 2.1 — Project Brief & Intent Canvas | 次に着手 | 「何を作りたいか」を目的、対象者、必須機能、制約、完成条件へ対話的に整理・保存 |
+| 2.2 — Build Proposal | 計画済み | 画面、機能、データ、変更範囲、想定リスクを日常語で事前提示し、着手前に確認できるようにする |
+| 2.3 — Guided Build Orchestration | 計画済み | 適切なAI・役割を内部で選び、安全な作業コピーで実装・テストを進行表示する |
+| 2.4 — Review, Apply & Revert | 計画済み | 変更要約、差分、検証結果を提示し、利用者が適用・保留・破棄を選べるようにする |
+| 2.5 — Project Memory & Iteration | 計画済み | 決定事項、未解決事項、変更履歴、次の改善候補をプロジェクト単位で引き継ぐ |
+
+完了条件:
+
+- 「読書記録アプリを作りたい」のような依頼から、確認可能なBriefを作成できる
+- 実装前に、何が作られ何が変わるかを技術用語に偏らず確認できる
+- 実装・テストは安全な作業コピーで実行される
+- 変更を元の作業場所へ反映する前に、要約・テスト結果・差分を確認できる
+- 次の会話で、過去の決定と未完了事項を自然に引き継げる
+
+## Parent Phase 3 — Decision Lab
+
+状態: **実装済み**
+
+Jevに限らず、ローカルまたは互換APIで提供される意思決定モデルを、通常会話と分離して比較・評価します。判断結果は観察・提案に留め、外部操作を自動実行しません。
+
+| Sub-phase | 状態 | 内容 |
+| --- | --- | --- |
+| 3.1 — Decision Model Lab | 実装済み | Jev、Ollaya、TypeSafe互換Provider、状態・質問の正規化、履歴 |
+| 3.2 — Decision Evaluation & Routing Policies | 実装済み | 精度、calibration、遅延、confidence、fallbackの評価 |
+| 3.3 — Decision Comparison & Presets | 実装済み | 入力プリセットと複数モデルの同条件比較 |
+
+## Parent Phase 4 — Local AI Gateway
+
+状態: **実装済み**
+
+| Sub-phase | 状態 | 内容 |
+| --- | --- | --- |
+| 4.1 — Compatibility API | 実装済み | `/v1/models`、`/v1/chat/completions`、Streaming、Profile指定、RAG拡張情報 |
+| 4.2 — AI CLI Chat Providers | 実装済み | Codex、Antigravity、Claude Codeを通常チャットのモデルとして利用 |
+
+## Parent Phase 5 — Trust, Web & Distribution
+
+状態: **大部分実装済み**
+
+ローカルで安全に使い、情報取得の範囲を自分で制御し、GitHubから再現可能な形で受け取れる状態を整えます。
+
+| Sub-phase | 状態 | 内容 |
+| --- | --- | --- |
+| 5.1 — Security, Reliability & Migration | 実装済み | loopback保護、Keychain、バックアップ・復元、移行、AIタスクの書込み境界 |
+| 5.1a — Release-blocking Fixes | 実装済み | Apple FM、RAG引用、再検索、CLIタスクの受入上の不具合修正 |
+| 5.1b — Final Manual Acceptance | 実装済み | 基本操作、会話復元、停止、書出し、表示崩れを手動受入で確認 |
+| 5.2a — Repository Readiness | 実装済み | Apache-2.0、README、貢献・セキュリティ文書、GitHub基盤 |
+| 5.2b — Reproducible Build & CI | 実装済み | 再現可能なビルド、成果物検査、GitHub Actions、秘密情報検査 |
+| 5.2c — Signed macOS Distribution | 任意・保留 | Apple Developer Program加入時の署名・公証・Staple自動化 |
+| 5.2d — GitHub Source Publication | 実装済み | 公開ソース、クリーンclone、ローカルビルド導線 |
+| 5.2e — Public Launch Verification | 実装済み | 初回会話、資料なし時の挙動、IME Enter、言語切替を確認・修正 |
+| 5.2f–5.2s — Web Research | 実装済み | 内包ブラウザ、SearXNG/Tavily、診断、自動利用、設定、プライバシー、アクセシビリティ、検索プリセット、別ウインドウ |
+
+今後必要になった場合は、Webリサーチの同期・共有、Provider追加、公開配布を、独立したSub-phaseとして追加します。
+
+## Parent Phase 6 — Continuous Quality
+
+状態: **一部実装済み**
+
+回答品質を「感覚」だけで判断せず、根拠・再現・比較によって継続的に確認する層です。
+
+| Sub-phase | 状態 | 内容 |
+| --- | --- | --- |
+| 6.1 — Evidence & Replay Lab | 実装済み | Context Flight RecorderとCounterfactual Replay |
+| 6.2 — Evidence Regression Suites | 実装済み | 重要な回答の基準ケースと条件比較 |
+| 6.3 — Regression Policies & Reports | 実装済み | 回帰分類、ポリシー、Markdown/CSVレポート |
+| 6.4 — Headless Regression & CI Gate | 計画済み | GUIを開かずにSuiteを実行し、CIで回帰を合否判定。ただしVibe Build Workspaceの基本導線を優先する |
+
+## 実装の優先順
+
+1. **Parent Phase 2 / Sub-phase 2.1 — Project Brief & Intent Canvas**
+2. **Parent Phase 2 / Sub-phase 2.2 — Build Proposal**
+3. **Parent Phase 2 / Sub-phase 2.3 — Guided Build Orchestration**
+4. **Parent Phase 2 / Sub-phase 2.4 — Review, Apply & Revert**
+5. **Parent Phase 2 / Sub-phase 2.5 — Project Memory & Iteration**
+6. **Parent Phase 6 / Sub-phase 6.4 — Headless Regression & CI Gate**
+
+```mermaid
+flowchart LR
+    I[2.1 Intent] --> P[2.2 Proposal] --> B[2.3 Guided Build] --> R[2.4 Review / Apply] --> M[2.5 Project Memory]
+    E[1.6–1.8 Evidence] --> R
+    A[2.0 AI Execution] --> B
+    M --> C[6.4 Headless Regression / CI]
+```
+
+## 旧計画との対応
+
+既に完了した機能を失ったり、移し替えたりするものではありません。番号を将来の製品体験に合わせて整理し直すための対応表です。
+
+| これまでの表記 | 新しい位置 |
+| --- | --- |
+| Parent Phase 0 / Sub-phase 0.1–0.5 | Parent Phase 0 / Sub-phase 0.1–0.5 |
+| Parent Phase 1 / Sub-phase 1.1–1.5 | Parent Phase 1 / Sub-phase 1.1–1.5 |
+| 旧 Parent Phase 2 / Sub-phase 2.1–2.3 | Parent Phase 2 / Sub-phase 2.0（Agent Execution Foundation） |
+| Parent Phase 3 / Sub-phase 3.1–3.3 | Parent Phase 3 / Sub-phase 3.1–3.3 |
+| Parent Phase 4 / Sub-phase 4.1–4.2 | Parent Phase 4 / Sub-phase 4.1–4.2 |
+| Parent Phase 5 / Sub-phase 5.1–5.2s | Parent Phase 5 / 各該当Sub-phase |
+| 旧 Parent Phase 6 / Sub-phase 6.1–6.3 | Parent Phase 1 / Sub-phase 1.6–1.8、および Parent Phase 6 / Sub-phase 6.1–6.3として継続参照 |
+
+Evidence機能は、知識の根拠層でもあり、継続品質の検証層でもあります。このため実装済み番号の互換性を保ったまま、製品構成上はParent Phase 1と6の両方から参照します。
+
+## 設計原則
+
+- まず利用者の意図と完成条件を確認し、モデル・CLI・Gitの選択は内部の手段として扱う
+- 資料、Web、会話、実装結果の出所を確認可能にする
+- AIが変更を提案・実装しても、元の作業場所への適用は利用者が確認して決める
+- 実装・検証は安全な作業コピーで行い、取消・再試行・履歴確認を可能にする
+- RAG、Evidence、評価は特定のモデルやAIコーディングCLIへ閉じない
+- 保存形式にはバージョンと移行を用意し、既存の会話、資料、評価データを守る
+- 新しいSub-phaseは完了条件と回帰確認を備え、既存の操作を壊さない
