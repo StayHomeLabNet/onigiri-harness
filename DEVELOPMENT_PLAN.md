@@ -28,7 +28,7 @@ Codex、Antigravity、Claude Code、ローカルLLMは、この体験を実現�
 | **5 — Trust, Web & Distribution** | 大部分実装済み | 安全性、移行、Webリサーチ、アクセシビリティ、公開・CI |
 | **6 — Continuous Quality** | 一部実装済み | Evidence Regressionは実装済み。Headless実行とCI判定が次の候補 |
 
-次に実装する候補は、**Parent Phase 2 / Sub-phase 2.5 — Project Memory & Iteration** です。目標、提案、実装、確認の判断を時系列で残し、次の改善依頼へ自然につなげられるようにします。
+次に実装する候補は、**Parent Phase 6 / Sub-phase 6.4 — Headless Regression & CI Gate** です。Evidence Regression SuiteをGUIなしで実行し、CIで回帰を合否判定できるようにします。
 
 ```mermaid
 flowchart LR
@@ -88,7 +88,7 @@ flowchart LR
 | 2.2 — Build Proposal | 実装済み | Briefから画面・機能、完成確認、変更範囲、制約、未確認事項を生成し、下書き・要確認・確認済みとして保存 |
 | 2.3 — Guided Build Orchestration | 実装済み | 確認済みの提案から、Git worktreeまたは安全なコピーを作成し、隔離環境だけに書込み可能なAIタスクを開始・記録 |
 | 2.4 — Review, Apply & Revert | 実装済み | AIタスク結果、変更ファイル、パッチを確認し、明示確認の後にGit作業フォルダへ適用・適用取り消し・隔離環境破棄を行う |
-| 2.5 — Project Memory & Iteration | 計画済み | 決定事項、未解決事項、変更履歴、次の改善候補をプロジェクト単位で引き継ぐ |
+| 2.5 — Project Memory & Iteration | 実装済み | 決定事項、未解決事項、提案・隔離ビルド・適用判断の履歴をプロジェクト単位で保存し、次の一手へ引き継ぐ |
 
 完了条件:
 
@@ -154,8 +154,7 @@ Jevに限らず、ローカルまたは互換APIで提供される意思決定�
 
 ## 実装の優先順
 
-1. **Parent Phase 2 / Sub-phase 2.5 — Project Memory & Iteration**
-2. **Parent Phase 6 / Sub-phase 6.4 — Headless Regression & CI Gate**
+1. **Parent Phase 6 / Sub-phase 6.4 — Headless Regression & CI Gate**
 
 ```mermaid
 flowchart LR

@@ -762,6 +762,9 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var status: VibeProjectStatus
   var proposal: VibeBuildProposal?
   var buildRuns: [VibeBuildRun]
+  var decisions: [String]
+  var openItems: [String]
+  var memory: [VibeProjectMemoryEntry]
   var createdAt: Date
   var updatedAt: Date
 
@@ -769,7 +772,8 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     id: UUID = UUID(), title: String, goal: String, audience: String,
     essentialFeatures: [String], constraints: String, completionCriteria: [String], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
-    buildRuns: [VibeBuildRun] = [], createdAt: Date = Date(), updatedAt: Date = Date()
+    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [],
+    memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
   ) {
     self.id = id
     self.title = title
@@ -782,13 +786,16 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     self.status = status
     self.proposal = proposal
     self.buildRuns = buildRuns
+    self.decisions = decisions
+    self.openItems = openItems
+    self.memory = memory
     self.createdAt = createdAt
     self.updatedAt = updatedAt
   }
 
   private enum CodingKeys: String, CodingKey {
     case id, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
-    case status, proposal, buildRuns, createdAt, updatedAt
+    case status, proposal, buildRuns, decisions, openItems, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
@@ -805,6 +812,9 @@ private struct VibeProject: Identifiable, Codable, Equatable {
       status: try values.decodeIfPresent(VibeProjectStatus.self, forKey: .status) ?? .draft,
       proposal: try values.decodeIfPresent(VibeBuildProposal.self, forKey: .proposal),
       buildRuns: try values.decodeIfPresent([VibeBuildRun].self, forKey: .buildRuns) ?? [],
+      decisions: try values.decodeIfPresent([String].self, forKey: .decisions) ?? [],
+      openItems: try values.decodeIfPresent([String].self, forKey: .openItems) ?? [],
+      memory: try values.decodeIfPresent([VibeProjectMemoryEntry].self, forKey: .memory) ?? [],
       createdAt: try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
       updatedAt: try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date())
   }
@@ -814,6 +824,13 @@ private struct VibeProject: Identifiable, Codable, Equatable {
       title: "", goal: "", audience: "", essentialFeatures: [], constraints: "",
       completionCriteria: [], nextStep: "")
   }
+}
+
+private struct VibeProjectMemoryEntry: Identifiable, Codable, Equatable {
+  var id: UUID = UUID()
+  var createdAt: Date = Date()
+  var kind: String
+  var detail: String
 }
 
 private struct VibeBuildRun: Identifiable, Codable, Equatable {
@@ -1089,6 +1106,10 @@ private struct VibeBuildProposal: Codable, Equatable {
     if let index = projects.firstIndex(where: { $0.id == updated.id }) {
       projects[index] = updated
     } else {
+      if updated.memory.isEmpty {
+        updated.memory.append(VibeProjectMemoryEntry(
+          kind: "project", detail: "プロジェクトを作成しました。"))
+      }
       projects.insert(updated, at: 0)
     }
     persist()
@@ -6289,6 +6310,8 @@ private struct VibeProjectEditor: View {
   @State private var reviewMessage: String?
   @State private var reviewingBuild = false
   @State private var pendingReviewAction: VibeBuildReviewAction?
+  @State private var decisionDraft = ""
+  @State private var openItemDraft = ""
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -6365,6 +6388,7 @@ private struct VibeProjectEditor: View {
         proposalSection
         guidedBuildSection
         reviewSection
+        projectMemorySection
 
         HStack {
           if let delete {
@@ -6395,6 +6419,81 @@ private struct VibeProjectEditor: View {
           Task { await performReviewAction(action) }
         },
         secondaryButton: .cancel(Text(english ? "Cancel" : "キャンセル")))
+    }
+  }
+
+  private var projectMemorySection: some View {
+    GroupBox(english ? "Project memory" : "プロジェクトの記憶") {
+      VStack(alignment: .leading, spacing: 12) {
+        Text(english
+          ? "Keep the decisions and loose ends that should guide the next request."
+          : "次の改善依頼で引き継ぐ決定事項と、未解決のことを残します。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
+        memoryDraftRow(
+          title: english ? "Decision" : "決定事項", placeholder: english ? "For example: Keep all data on this Mac." : "例: データはこのMacだけに保存する。",
+          text: $decisionDraft, add: { addMemoryDraft(kind: "decision", text: $decisionDraft) })
+        if !project.decisions.isEmpty {
+          memoryList(project.decisions, symbol: "checkmark.circle", remove: { index in
+            project.decisions.remove(at: index)
+            recordMemory(kind: "decision", detail: english ? "Removed a decision." : "決定事項を削除しました。")
+            saveProjectMemory()
+          })
+        }
+
+        memoryDraftRow(
+          title: english ? "Open item" : "未解決事項", placeholder: english ? "For example: Decide whether sign-in is needed." : "例: ログインが必要か決める。",
+          text: $openItemDraft, add: { addMemoryDraft(kind: "open", text: $openItemDraft) })
+        if !project.openItems.isEmpty {
+          memoryList(project.openItems, symbol: "questionmark.circle", remove: { index in
+            project.openItems.remove(at: index)
+            recordMemory(kind: "open", detail: english ? "Resolved or removed an open item." : "未解決事項を解決または削除しました。")
+            saveProjectMemory()
+          })
+        }
+
+        if !project.memory.isEmpty {
+          Divider()
+          Text(english ? "Timeline" : "履歴").font(.caption).foregroundStyle(.secondary)
+          ForEach(project.memory.sorted { $0.createdAt > $1.createdAt }.prefix(12)) { entry in
+            HStack(alignment: .top, spacing: 8) {
+              Image(systemName: memorySymbol(for: entry.kind)).foregroundStyle(.secondary)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(entry.detail).font(.caption).textSelection(.enabled)
+                Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                  .font(.caption2).foregroundStyle(.secondary)
+              }
+            }
+          }
+        }
+      }
+      .padding(.top, 4)
+    }
+  }
+
+  private func memoryDraftRow(
+    title: String, placeholder: String, text: Binding<String>, add: @escaping () -> Void
+  ) -> some View {
+    HStack {
+      TextField("\(title): \(placeholder)", text: text)
+        .textFieldStyle(.roundedBorder)
+      Button(english ? "Add" : "追加", systemImage: "plus") { add() }
+        .disabled(text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+  }
+
+  private func memoryList(_ items: [String], symbol: String, remove: @escaping (Int) -> Void) -> some View {
+    VStack(alignment: .leading, spacing: 5) {
+      ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+        HStack {
+          Label(item, systemImage: symbol).font(.caption)
+          Spacer()
+          Button(english ? "Remove" : "削除", systemImage: "xmark") { remove(index) }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+        }
+      }
     }
   }
 
@@ -6583,6 +6682,9 @@ private struct VibeProjectEditor: View {
             source.essentialFeatures = lines(from: featureLines)
             source.completionCriteria = lines(from: completionLines)
             proposal = VibeBuildProposal.make(from: source, english: english)
+            recordMemory(
+              kind: "proposal",
+              detail: english ? "Created or refreshed the build proposal." : "実装提案を作成または更新しました。")
           }
         }
 
@@ -6655,6 +6757,41 @@ private struct VibeProjectEditor: View {
       .filter { !$0.isEmpty }
   }
 
+  private func addMemoryDraft(kind: String, text: Binding<String>) {
+    let value = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !value.isEmpty else { return }
+    if kind == "decision" { project.decisions.append(value) }
+    else { project.openItems.append(value) }
+    recordMemory(kind: kind, detail: value)
+    text.wrappedValue = ""
+    saveProjectMemory()
+  }
+
+  private func recordMemory(kind: String, detail: String) {
+    project.memory.insert(VibeProjectMemoryEntry(kind: kind, detail: detail), at: 0)
+    if project.memory.count > 100 { project.memory = Array(project.memory.prefix(100)) }
+  }
+
+  private func saveProjectMemory() {
+    project.essentialFeatures = lines(from: featureLines)
+    project.completionCriteria = lines(from: completionLines)
+    project.proposal = proposal
+    save(project)
+  }
+
+  private func memorySymbol(for kind: String) -> String {
+    switch kind {
+    case "decision": return "checkmark.circle"
+    case "open": return "questionmark.circle"
+    case "proposal": return "doc.text"
+    case "build": return "hammer"
+    case "apply": return "checkmark.seal"
+    case "revert": return "arrow.uturn.backward"
+    case "discard": return "trash"
+    default: return "clock"
+    }
+  }
+
   private func chooseSourceDirectory() {
     let panel = NSOpenPanel()
     panel.canChooseFiles = false
@@ -6692,6 +6829,11 @@ private struct VibeProjectEditor: View {
         provider: buildProvider, sourceDirectory: sourceDirectory, workspaceDirectory: workspace,
         taskID: task.id, status: "実行中", detail: "\(buildProvider.name)が隔離環境で実装しています。"), at: 0)
       project.status = .active
+      recordMemory(
+        kind: "build",
+        detail: english
+          ? "Started an isolated \(buildProvider.name) build."
+          : "\(buildProvider.name)で隔離ビルドを開始しました。")
       save(project)
       buildMessage = english ? "Build started in an isolated workspace." : "隔離した作業コピーでビルドを開始しました。"
     } catch {
@@ -6730,17 +6872,20 @@ private struct VibeProjectEditor: View {
         project.buildRuns[index].appliedAt = Date()
         project.buildRuns[index].status = "適用済み"
         project.buildRuns[index].detail = "確認済みのパッチを元の作業フォルダへ適用しました。"
+        recordMemory(kind: "apply", detail: english ? "Applied the reviewed patch to the original folder." : "確認済みのパッチを元フォルダへ適用しました。")
         reviewMessage = english ? "The reviewed patch was applied to the original folder." : "確認済みのパッチを元フォルダへ適用しました。"
       case .revert:
         try VibeBuildWorkspace.revert(project.buildRuns[index])
         project.buildRuns[index].revertedAt = Date()
         project.buildRuns[index].status = "適用を取り消し"
         project.buildRuns[index].detail = "Onigiriが適用したパッチを元の作業フォルダから戻しました。"
+        recordMemory(kind: "revert", detail: english ? "Reverted the patch applied by Onigiri." : "Onigiriが適用したパッチを戻しました。")
         reviewMessage = english ? "The applied patch was reversed." : "適用済みのパッチを戻しました。"
       case .discard:
         try VibeBuildWorkspace.discard(project.buildRuns[index])
         project.buildRuns[index].status = "隔離環境を破棄"
         project.buildRuns[index].detail = "隔離環境を破棄しました。元の作業フォルダは変更していません。"
+        recordMemory(kind: "discard", detail: english ? "Discarded the isolated workspace without changing the original folder." : "元フォルダを変更せず隔離環境を破棄しました。")
         reviewMessage = english ? "The isolated workspace was discarded." : "隔離環境を破棄しました。"
       }
       project.proposal = proposal
