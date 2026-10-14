@@ -6467,6 +6467,7 @@ private struct VibeProjectEditor: View {
         guidedBuildSection
         reviewSection
         validationEvidenceSection
+        completionReadinessSection
         projectMemorySection
 
         HStack {
@@ -6570,6 +6571,48 @@ private struct VibeProjectEditor: View {
         }
       }.padding(.top, 4)
     }
+  }
+
+  private var completionReadinessSection: some View {
+    let hasBrief = !project.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && !project.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasApprovedPlan = proposal?.status == .approved
+    let hasChecks = !project.validationSteps.isEmpty
+    let hasEvidence = project.validationResults.contains { $0.outcome == .passed }
+    let hasFailure = project.validationResults.contains { $0.outcome == .failed }
+    let ready = hasBrief && hasApprovedPlan && hasChecks && hasEvidence && !hasFailure
+    return GroupBox(english ? "Completion readiness" : "完成の準備状況") {
+      VStack(alignment: .leading, spacing: 8) {
+        Text(english ? "Use this as a final check before calling the project complete." : "プロジェクトを完成にする前の最終確認です。")
+          .font(.caption).foregroundStyle(.secondary)
+        readinessRow(hasBrief, english ? "The goal is written" : "目標が書かれている")
+        readinessRow(hasApprovedPlan, english ? "The build plan is approved" : "作る計画を確認済み")
+        readinessRow(hasChecks, english ? "Validation checks are listed" : "確認項目が登録されている")
+        readinessRow(hasEvidence, english ? "At least one check is recorded as passed" : "確認済みの結果が1件以上ある")
+        if hasFailure {
+          Label(english ? "A failed check needs attention before completion." : "失敗した確認結果があるため、完了前に対応が必要です。", systemImage: "exclamationmark.triangle.fill")
+            .font(.caption).foregroundStyle(.orange)
+        }
+        HStack {
+          Text(ready ? (english ? "Ready to mark complete." : "完成にできます。") : (english ? "Complete the remaining checks first." : "残っている確認を終えてから完成にします。"))
+            .font(.caption).foregroundStyle(ready ? Color.green : .secondary)
+          Spacer()
+          Button(english ? "Mark complete" : "完成にする", systemImage: "checkmark.seal.fill") {
+            project.status = .completed
+            recordMemory(kind: "completion", detail: english ? "Marked the project complete after reviewing the validation evidence." : "確認結果を見直したうえで、プロジェクトを完成にしました。")
+            saveProjectMemory()
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(!ready || project.status == .completed)
+        }
+      }.padding(.top, 4)
+    }
+  }
+
+  private func readinessRow(_ complete: Bool, _ title: String) -> some View {
+    Label(title, systemImage: complete ? "checkmark.circle.fill" : "circle")
+      .font(.caption)
+      .foregroundStyle(complete ? Color.green : .secondary)
   }
 
   private func recordManualValidation() {

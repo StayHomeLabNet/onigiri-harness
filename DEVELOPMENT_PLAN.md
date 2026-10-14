@@ -95,6 +95,7 @@ flowchart LR
 | 2.9 — Vibe Build Pilot Re-Acceptance | 実施済み | クリーンなGitプロジェクトで隔離worktree、変更確認、適用、取消と元のクリーン状態への復帰を確認 |
 | 2.10 — Vibe Build Validation Profiles | 実装済み | プロジェクトごとの完成確認項目を保存し、AIビルド依頼に同梱 |
 | 2.11 — Validation Results & Evidence | 実装済み | AIと手動の確認結果をプロジェクト単位で保存・確認 |
+| 2.12 — Completion Readiness | 実装済み | 目標、計画、確認項目、確認結果を基に完成の準備状況を判断 |
 
 完了条件:
 
