@@ -213,7 +213,11 @@ public struct OnigiriDataVault: Sendable {
   private func secureWrite(_ data: Data, to url: URL) throws {
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try data.write(to: url, options: [.atomic, .completeFileProtection])
+    var options: Data.WritingOptions = [.atomic]
+#if os(iOS) || os(tvOS) || os(watchOS)
+    options.insert(.completeFileProtection)
+#endif
+    try data.write(to: url, options: options)
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
   }
 
