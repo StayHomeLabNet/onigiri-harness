@@ -90,7 +90,7 @@ flowchart LR
 | 2.4 — Review, Apply & Revert | 実装済み | AIタスク結果、変更ファイル、パッチを確認し、明示確認の後にGit作業フォルダへ適用・適用取り消し・隔離環境破棄を行う |
 | 2.5 — Project Memory & Iteration | 実装済み | 決定事項、未解決事項、提案・隔離ビルド・適用判断の履歴をプロジェクト単位で保存し、次の一手へ引き継ぐ |
 | 2.6 — Vibe Build Pilot Acceptance | 実施済み・2.7へ移行 | 代表プロジェクトを隔離Git worktreeとAIタスクで検証し、保存処理とタスク完了待機の改善事項を記録 |
-| 2.7 — Build Reliability & Recovery | 計画済み | Pilotで得た課題を基に、AI利用可否の事前確認、タスク進行同期、作業コピーの回復・掃除、適用失敗時の説明を強化 |
+| 2.7 — Build Reliability & Recovery | 実装済み | 作業元の事前診断、隔離worktreeの不要情報掃除、タスク状態の自動同期、同じ隔離環境での再試行を追加 |
 | 2.8 — Vibe Build UX Refinement | 計画済み | 用語、初回案内、提案・確認画面、次の一手を、非技術者が迷わず使える形へ改善 |
 
 完了条件:
@@ -122,6 +122,17 @@ flowchart LR
 - 保存初期化のmacOS上の不具合を修正し、サーバー起動とAIタスク開始を実済み
 - AIタスクが600秒でタイムアウトしたため、差分確認・適用・取消の終端通過は2.7で再検証する
 - 再現手順・期待結果・実際の結果は `docs/VIBE_BUILD_PILOT_2026-10-14.md` に記録
+
+### Sub-phase 2.7 — Build Reliability & Recovery
+
+状態: **実装済み**
+
+- 隔離ビルドの開始前に、作業元フォルダの存在、書込権限、Gitの未コミット変更を確認する
+- Gitの未コミット変更がある場合は、元フォルダへの影響を避けるため開始を止め、次の対処を示す
+- 隔離worktreeを作る前に、Gitの既に使われていないworktree情報を整理する
+- 実行中のAIタスクは、進行・完了・失敗・タイムアウトをビルド履歴に自動反映する
+- 失敗、キャンセル、タイムアウトのタスクは、同じ隔離環境で再試行できる。以前の結果は履歴に残る
+- 隔環境の破棄・適用・取消は、これまでどおり確認操作として残す
 
 ## Parent Phase 3 — Decision Lab
 
@@ -179,7 +190,7 @@ Jevに限らず、ローカルまたは互換APIで提供される意思決定�
 
 ## 実装の優先順
 
-次は **Parent Phase 2 / Sub-phase 2.7 — Build Reliability & Recovery** を実施します。Pilotで得たタイムアウトと保存処理の知見を基に、再試行、診断、回復の経路を整備します。
+次は **Parent Phase 2 / Sub-phase 2.8 — Vibe Build UX Refinement** を実施します。初回ガイド、用語、提案・レビュー導線を、技術的な知識なしでも判断できる表現に整えます。
 
 ```mermaid
 flowchart LR

@@ -142,6 +142,11 @@ public struct CodexTaskActionRequest: Codable, Sendable, Equatable {
   public init(id: UUID) { self.id = id }
 }
 
+public struct CodexTaskRetryRequest: Codable, Sendable, Equatable {
+  public let id: UUID
+  public init(id: UUID) { self.id = id }
+}
+
 public enum CodexAgentError: LocalizedError {
   case unavailable(String)
   case invalidRequest(String)
@@ -289,6 +294,18 @@ public actor CodexAgentManager {
       CodexTaskProgress(kind: "task.cancelled", message: "キャンセルしました。"))
     trimAndSave()
     return records[index]
+  }
+
+  /// Restarts a finished task with the same provider, instruction, and workspace.
+  /// The earlier task remains in history so its outcome can still be reviewed.
+  public func retry(_ id: UUID) async throws -> CodexTaskRecord {
+    guard let previous = records.first(where: { $0.id == id }) else {
+      throw CodexAgentError.taskNotFound
+    }
+    guard previous.status != .running else {
+      throw CodexAgentError.invalidRequest("実行中のAIタスクは再試行できません。完了を待つかキャンセルしてください。")
+    }
+    return try await start(previous.request)
   }
 
   private func execute(

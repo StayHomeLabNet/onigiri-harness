@@ -225,6 +225,18 @@ final class HTTPConnection: @unchecked Sendable {
         } catch {
           sendJSON(statusCode(for: error), APIError(error: error.localizedDescription))
         }
+      } else if method == "POST", (path == "/codex/tasks/retry" || path == "/agents/tasks/retry") {
+        guard isJSON(headers),
+          let request = try? JSONDecoder().decode(CodexTaskRetryRequest.self, from: body)
+        else {
+          sendJSON(400, APIError(error: "JSON の id が必要です。"))
+          return
+        }
+        do {
+          sendJSON(200, try await codexAgentManager.retry(request.id))
+        } catch {
+          sendJSON(statusCode(for: error), APIError(error: error.localizedDescription))
+        }
       } else if method == "GET", path == "/decision/providers" {
         sendJSON(200, DecisionProviderCatalog.descriptors)
       } else if method == "POST", path == "/decision/models" {

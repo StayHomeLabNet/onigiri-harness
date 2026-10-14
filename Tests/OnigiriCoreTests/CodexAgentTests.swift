@@ -161,6 +161,21 @@ private func waitForCodexTask(
   #expect(await waitForCodexTask(started.id, in: manager, status: .cancelled) != nil)
 }
 
+@Test func codexAgentRetriesFinishedTaskInSameWorkspace() async throws {
+  let manager = CodexAgentManager(adapter: SuccessfulCodexAdapter(), storeURL: nil)
+  let directory = FileManager.default.temporaryDirectory.path
+  let started = try await manager.start(
+    CodexTaskRequest(prompt: "読書記録を追加", workingDirectory: directory))
+  _ = await waitForCodexTask(started.id, in: manager, status: .completed)
+
+  let retried = try await manager.retry(started.id)
+  let completed = await waitForCodexTask(retried.id, in: manager, status: .completed)
+
+  #expect(retried.id != started.id)
+  #expect(completed?.request == started.request)
+  #expect(await manager.list().tasks.count == 2)
+}
+
 @Test func codexAgentRejectsStartWhenCLIIsUnavailable() async {
   let manager = CodexAgentManager(adapter: UnavailableCodexAdapter(), storeURL: nil)
   do {

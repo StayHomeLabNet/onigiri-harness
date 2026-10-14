@@ -854,6 +854,11 @@ private struct VibeBuildReview {
   var hasChanges: Bool { !diff.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 }
 
+private struct VibeBuildPreflight {
+  var isGitRepository: Bool
+  var sourceHasUncommittedChanges: Bool
+}
+
 private enum VibeBuildReviewAction: Identifiable {
   case apply(UUID)
   case revert(UUID)
@@ -894,11 +899,31 @@ private enum VibeBuildReviewAction: Identifiable {
 }
 
 private enum VibeBuildWorkspace {
-  static func prepare(sourceDirectory: String, projectID: UUID) throws -> String {
+  static func preflight(sourceDirectory: String) throws -> VibeBuildPreflight {
     let sourceURL = URL(fileURLWithPath: sourceDirectory, isDirectory: true).standardizedFileURL
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory), isDirectory.boolValue
     else { throw StreamError(message: "作業元フォルダが見つかりません。") }
+    guard FileManager.default.isWritableFile(atPath: sourceURL.path) else {
+      throw StreamError(message: "作業元フォルダへのアクセス権がありません。")
+    }
+    let isGit = isGitDirectory(sourceURL.path)
+    guard isGit else {
+      return VibeBuildPreflight(isGitRepository: false, sourceHasUncommittedChanges: false)
+    }
+    let status = try runGit(arguments: ["-C", sourceURL.path, "status", "--porcelain=v1"])
+    guard status.status == 0 else { throw StreamError(message: status.output) }
+    return VibeBuildPreflight(
+      isGitRepository: true,
+      sourceHasUncommittedChanges: !status.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+  }
+
+  static func prepare(sourceDirectory: String, projectID: UUID) throws -> String {
+    let sourceURL = URL(fileURLWithPath: sourceDirectory, isDirectory: true).standardizedFileURL
+    let preflight = try preflight(sourceDirectory: sourceURL.path)
+    guard !preflight.sourceHasUncommittedChanges else {
+      throw StreamError(message: "作業元に未コミットの変更があります。まず変更を確認してコミットまたは退避してください。")
+    }
 
     let root = try FileManager.default.url(
       for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -906,7 +931,8 @@ private enum VibeBuildWorkspace {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let destination = root.appending(path: ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-"), directoryHint: .isDirectory)
 
-    if FileManager.default.fileExists(atPath: sourceURL.appending(path: ".git").path) {
+    if preflight.isGitRepository {
+      _ = try runGit(arguments: ["-C", sourceURL.path, "worktree", "prune"])
       let result = try runGit(arguments: ["-C", sourceURL.path, "worktree", "add", "--detach", destination.path, "HEAD"])
       guard result.status == 0 else {
         throw StreamError(message: "安全なGit作業コピーを作成できませんでした: \(result.output)")
@@ -6309,6 +6335,7 @@ private struct VibeProjectEditor: View {
   @State private var buildReview: VibeBuildReview?
   @State private var reviewMessage: String?
   @State private var reviewingBuild = false
+  @State private var retryingBuild = false
   @State private var pendingReviewAction: VibeBuildReviewAction?
   @State private var decisionDraft = ""
   @State private var openItemDraft = ""
@@ -6419,6 +6446,12 @@ private struct VibeProjectEditor: View {
           Task { await performReviewAction(action) }
         },
         secondaryButton: .cancel(Text(english ? "Cancel" : "キャンセル")))
+    }
+    .task(id: project.id) {
+      while !Task.isCancelled {
+        await refreshBuildRunStatuses()
+        try? await Task.sleep(for: .seconds(3))
+      }
     }
   }
 
@@ -6533,6 +6566,19 @@ private struct VibeProjectEditor: View {
                   Text(task.status.rawValue).font(.caption.bold())
                   if let result = task.result { Text(result).textSelection(.enabled) }
                   if let error = task.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+                  if task.status != .running && task.status != .completed, let run = selectedBuildRun {
+                    HStack {
+                      Text(english
+                        ? "You can retry in the same isolated workspace after reviewing this result."
+                        : "結果を確認してから、同じ隔離環境で再試行できます。")
+                        .font(.caption).foregroundStyle(.secondary)
+                      Spacer()
+                      Button(english ? "Retry" : "再試行", systemImage: "arrow.clockwise") {
+                        Task { await retryBuild(run) }
+                      }
+                      .disabled(retryingBuild)
+                    }
+                  }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
               }
@@ -6857,6 +6903,88 @@ private struct VibeProjectEditor: View {
       buildReview = nil
       reviewMessage = error.localizedDescription
     }
+  }
+
+  @MainActor private func refreshBuildRunStatuses() async {
+    guard !project.buildRuns.isEmpty else { return }
+    let (data, response): (Data, URLResponse)
+    do {
+      (data, response) = try await URLSession.shared.data(for: URLRequest(url: OnigiriEndpoint.url("agents/tasks")))
+    } catch { return }
+    guard (response as? HTTPURLResponse)?.statusCode == 200,
+      let tasks = try? JSONDecoder().decode(CodexTaskListResponse.self, from: data).tasks
+    else { return }
+
+    var didChange = false
+    for index in project.buildRuns.indices {
+      guard let taskID = project.buildRuns[index].taskID,
+        let task = tasks.first(where: { $0.id == taskID })
+      else { continue }
+      let status = buildRunStatus(for: task)
+      let detail = buildRunDetail(for: task)
+      if project.buildRuns[index].status != status || project.buildRuns[index].detail != detail {
+        project.buildRuns[index].status = status
+        project.buildRuns[index].detail = detail
+        didChange = true
+      }
+    }
+    if didChange {
+      project.proposal = proposal
+      save(project)
+    }
+  }
+
+  @MainActor private func retryBuild(_ run: VibeBuildRun) async {
+    guard let taskID = run.taskID else { return }
+    retryingBuild = true
+    defer { retryingBuild = false }
+    do {
+      var request = URLRequest(url: OnigiriEndpoint.url("agents/tasks/retry"))
+      request.httpMethod = "POST"
+      request.timeoutInterval = 15
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      request.httpBody = try JSONEncoder().encode(CodexTaskRetryRequest(id: taskID))
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+        let apiError = try? JSONDecoder().decode(APIError.self, from: data)
+        throw StreamError(message: apiError?.error ?? "AIタスクを再試行できませんでした。")
+      }
+      let task = try JSONDecoder().decode(CodexTaskRecord.self, from: data)
+      if let previousIndex = project.buildRuns.firstIndex(where: { $0.id == run.id }) {
+        project.buildRuns[previousIndex].status = english ? "Retried" : "再試行へ移行"
+      }
+      project.buildRuns.insert(VibeBuildRun(
+        provider: run.provider, sourceDirectory: run.sourceDirectory,
+        workspaceDirectory: run.workspaceDirectory, taskID: task.id, status: english ? "Running" : "実行中",
+        detail: english ? "Retrying in the same isolated workspace." : "同じ隔離環境で再試行しています。"), at: 0)
+      selectedBuildRunID = project.buildRuns.first?.id
+      recordMemory(
+        kind: "build",
+        detail: english ? "Retried an AI build in its isolated workspace." : "隔離環境のAIビルドを再試行しました。")
+      project.proposal = proposal
+      save(project)
+      buildReview = nil
+      reviewMessage = english ? "The build was restarted. Its progress will update here." : "ビルドを再試行しました。進行状況はここに表示されます。"
+    } catch {
+      reviewMessage = error.localizedDescription
+    }
+  }
+
+  private func buildRunStatus(for task: CodexTaskRecord) -> String {
+    switch task.status {
+    case .running: return english ? "Running" : "実行中"
+    case .completed: return english ? "Completed" : "完了"
+    case .failed: return english ? "Failed" : "失敗"
+    case .cancelled: return english ? "Cancelled" : "キャンセル"
+    case .timedOut: return english ? "Timed out" : "タイムアウト"
+    }
+  }
+
+  private func buildRunDetail(for task: CodexTaskRecord) -> String {
+    if let error = task.error, !error.isEmpty { return error }
+    if let result = task.result, !result.isEmpty { return result }
+    if let progress = task.progress.last?.message, !progress.isEmpty { return progress }
+    return english ? "Waiting for the AI task to report progress." : "AIタスクからの進行連絡を待っています。"
   }
 
   @MainActor private func performReviewAction(_ action: VibeBuildReviewAction) async {
