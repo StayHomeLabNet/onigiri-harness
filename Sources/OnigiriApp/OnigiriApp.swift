@@ -759,6 +759,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var constraints: String
   var completionCriteria: [String]
   var validationSteps: [String]
+  var validationResults: [VibeValidationResult]
   var nextStep: String
   var status: VibeProjectStatus
   var proposal: VibeBuildProposal?
@@ -771,7 +772,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   init(
     id: UUID = UUID(), title: String, goal: String, audience: String,
-    essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], nextStep: String,
+    essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], validationResults: [VibeValidationResult] = [], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
     buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [],
     memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
@@ -784,6 +785,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     self.constraints = constraints
     self.completionCriteria = completionCriteria
     self.validationSteps = validationSteps
+    self.validationResults = validationResults
     self.nextStep = nextStep
     self.status = status
     self.proposal = proposal
@@ -797,7 +799,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
-    case validationSteps, status, proposal, buildRuns, decisions, openItems, memory, createdAt, updatedAt
+    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
@@ -811,6 +813,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
       constraints: try values.decode(String.self, forKey: .constraints),
       completionCriteria: try values.decode([String].self, forKey: .completionCriteria),
       validationSteps: try values.decodeIfPresent([String].self, forKey: .validationSteps) ?? [],
+      validationResults: try values.decodeIfPresent([VibeValidationResult].self, forKey: .validationResults) ?? [],
       nextStep: try values.decode(String.self, forKey: .nextStep),
       status: try values.decodeIfPresent(VibeProjectStatus.self, forKey: .status) ?? .draft,
       proposal: try values.decodeIfPresent(VibeBuildProposal.self, forKey: .proposal),
@@ -834,6 +837,30 @@ private struct VibeProjectMemoryEntry: Identifiable, Codable, Equatable {
   var createdAt: Date = Date()
   var kind: String
   var detail: String
+}
+
+private enum VibeValidationOutcome: String, Codable, CaseIterable, Identifiable {
+  case passed, needsAttention, failed
+  var id: String { rawValue }
+  func title(english: Bool) -> String {
+    switch self {
+    case .passed: return english ? "Passed" : "確認済み"
+    case .needsAttention: return english ? "Needs attention" : "要確認"
+    case .failed: return english ? "Failed" : "失敗"
+    }
+  }
+  var symbol: String {
+    switch self { case .passed: return "checkmark.circle.fill"; case .needsAttention: return "exclamationmark.circle.fill"; case .failed: return "xmark.circle.fill" }
+  }
+}
+
+private struct VibeValidationResult: Identifiable, Codable, Equatable {
+  var id: UUID = UUID()
+  var createdAt: Date = Date()
+  var outcome: VibeValidationOutcome
+  var detail: String
+  var source: String
+  var taskID: UUID?
 }
 
 private struct VibeBuildRun: Identifiable, Codable, Equatable {
@@ -6329,6 +6356,8 @@ private struct VibeProjectEditor: View {
   @State private var featureLines: String
   @State private var completionLines: String
   @State private var validationLines: String
+  @State private var validationResultDraft = ""
+  @State private var validationOutcome: VibeValidationOutcome = .passed
   @State private var proposal: VibeBuildProposal?
   @State private var sourceDirectory: String
   @State private var buildProvider: AITaskProvider = .codex
@@ -6437,6 +6466,7 @@ private struct VibeProjectEditor: View {
         proposalSection
         guidedBuildSection
         reviewSection
+        validationEvidenceSection
         projectMemorySection
 
         HStack {
@@ -6518,6 +6548,37 @@ private struct VibeProjectEditor: View {
         Text(detail).font(.caption).foregroundStyle(.secondary)
       }
     }
+  }
+
+  private var validationEvidenceSection: some View {
+    GroupBox(english ? "Validation results" : "確認結果と根拠") {
+      VStack(alignment: .leading, spacing: 9) {
+        Text(english ? "Record what you or the AI checked. These notes stay with this project." : "あなたやAIが確認した結果を残します。結果はこのプロジェクトと一緒に保存されます。")
+          .font(.caption).foregroundStyle(.secondary)
+        HStack {
+          Picker(english ? "Result" : "結果", selection: $validationOutcome) {
+            ForEach(VibeValidationOutcome.allCases) { outcome in Text(outcome.title(english: english)).tag(outcome) }
+          }.pickerStyle(.menu)
+          TextField(english ? "What did you check?" : "何を確認しましたか？", text: $validationResultDraft)
+            .textFieldStyle(.roundedBorder)
+          Button(english ? "Record" : "記録", systemImage: "checklist") { recordManualValidation() }
+            .disabled(validationResultDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        ForEach(project.validationResults.prefix(6)) { result in
+          Label("\(result.outcome.title(english: english)) · \(result.source): \(result.detail)", systemImage: result.outcome.symbol)
+            .font(.caption).foregroundStyle(result.outcome == .failed ? Color.red : .secondary)
+        }
+      }.padding(.top, 4)
+    }
+  }
+
+  private func recordManualValidation() {
+    let detail = validationResultDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !detail.isEmpty else { return }
+    project.validationResults.insert(VibeValidationResult(outcome: validationOutcome, detail: detail, source: english ? "Manual" : "手動"), at: 0)
+    project.validationResults = Array(project.validationResults.prefix(100))
+    validationResultDraft = ""
+    saveProjectMemory()
   }
 
   private var projectMemorySection: some View {
@@ -7007,6 +7068,16 @@ private struct VibeProjectEditor: View {
     do {
       var review = try VibeBuildWorkspace.review(run)
       review.task = try await loadTask(run.taskID)
+      if let task = review.task, task.status != .running,
+        !project.validationResults.contains(where: { $0.taskID == task.id })
+      {
+        let outcome: VibeValidationOutcome = task.status == .completed ? .passed : .needsAttention
+        let detail = task.result ?? task.error ?? (english ? "The AI task finished without a summary." : "AIタスクは要約なしで終了しました。")
+        project.validationResults.insert(VibeValidationResult(
+          outcome: outcome, detail: detail, source: task.request.provider.name, taskID: task.id), at: 0)
+        project.validationResults = Array(project.validationResults.prefix(100))
+        saveProjectMemory()
+      }
       buildReview = review
       reviewMessage = review.hasChanges
         ? (english ? "Review the patch, then choose whether to apply it." : "変更内容を確認してから、適用するか選んでください。")
