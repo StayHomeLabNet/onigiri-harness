@@ -96,6 +96,7 @@ flowchart LR
 | 2.10 — Vibe Build Validation Profiles | 実装済み | プロジェクトごとの完成確認項目を保存し、AIビルド依頼に同梱 |
 | 2.11 — Validation Results & Evidence | 実装済み | AIと手動の確認結果をプロジェクト単位で保存・確認 |
 | 2.12 — Completion Readiness | 実装済み | 目標、計画、確認項目、確認結果を基に完成の準備状況を判断 |
+| 2.13 — Project Handoff & Shareable Summary | 実装済み | 目標、計画、ビルド履歴、確認結果、未解決事項をMarkdownとして書き出す |
 
 完了条件:
 

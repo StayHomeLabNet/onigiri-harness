@@ -6358,6 +6358,7 @@ private struct VibeProjectEditor: View {
   @State private var validationLines: String
   @State private var validationResultDraft = ""
   @State private var validationOutcome: VibeValidationOutcome = .passed
+  @State private var handoffMessage: String?
   @State private var proposal: VibeBuildProposal?
   @State private var sourceDirectory: String
   @State private var buildProvider: AITaskProvider = .codex
@@ -6468,6 +6469,7 @@ private struct VibeProjectEditor: View {
         reviewSection
         validationEvidenceSection
         completionReadinessSection
+        handoffSection
         projectMemorySection
 
         HStack {
@@ -6613,6 +6615,59 @@ private struct VibeProjectEditor: View {
     Label(title, systemImage: complete ? "checkmark.circle.fill" : "circle")
       .font(.caption)
       .foregroundStyle(complete ? Color.green : .secondary)
+  }
+
+  private var handoffSection: some View {
+    GroupBox(english ? "Project handoff" : "プロジェクトの引き継ぎ") {
+      HStack {
+        VStack(alignment: .leading, spacing: 3) {
+          Text(english ? "Export a Markdown summary" : "Markdownの概要を書き出す")
+          Text(english ? "Includes the goal, plan, build history, validation evidence, and open items." : "目標、計画、ビルド履歴、確認結果、未解決事項をまとめます。")
+            .font(.caption).foregroundStyle(.secondary)
+          if let handoffMessage { Text(handoffMessage).font(.caption).foregroundStyle(.secondary) }
+        }
+        Spacer()
+        Button(english ? "Export Markdown" : "Markdownを書き出す", systemImage: "square.and.arrow.up") { exportProjectHandoff() }
+      }.padding(.top, 4)
+    }
+  }
+
+  private func exportProjectHandoff() {
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [.markdown]
+    panel.nameFieldStringValue = "\(project.title.isEmpty ? "Onigiri-Project" : project.title)-handoff.md"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do {
+      try projectHandoffMarkdown().write(to: url, atomically: true, encoding: .utf8)
+      handoffMessage = english ? "Saved: \(url.lastPathComponent)" : "保存しました: \(url.lastPathComponent)"
+    } catch { handoffMessage = error.localizedDescription }
+  }
+
+  private func projectHandoffMarkdown() -> String {
+    func list(_ title: String, _ values: [String]) -> String {
+      values.isEmpty ? "## \(title)\n- \(english ? "None" : "なし")" : "## \(title)\n" + values.map { "- \($0)" }.joined(separator: "\n")
+    }
+    let proposalText = proposal.map { "## \(english ? "Build proposal" : "実装提案")\n\($0.overview)" } ?? ""
+    let validations = project.validationResults.map { "\($0.outcome.title(english: english)) (\($0.source)): \($0.detail)" }
+    let builds = project.buildRuns.map { "\($0.provider.name) · \($0.status): \($0.detail)" }
+    return """
+    # \(project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title)
+
+    ## \(english ? "Goal" : "目標")
+    \(project.goal)
+
+    \(proposalText)
+
+    \(list(english ? "Completion checks" : "完成条件", project.completionCriteria))
+
+    \(list(english ? "Validation profile" : "確認項目", project.validationSteps))
+
+    \(list(english ? "Validation results" : "確認結果", validations))
+
+    \(list(english ? "Build history" : "ビルド履歴", builds))
+
+    \(list(english ? "Open items" : "未解決事項", project.openItems))
+    """
   }
 
   private func recordManualValidation() {
