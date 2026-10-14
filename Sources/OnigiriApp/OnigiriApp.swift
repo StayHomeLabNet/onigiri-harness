@@ -839,6 +839,27 @@ private struct VibeProjectMemoryEntry: Identifiable, Codable, Equatable {
   var detail: String
 }
 
+private enum VibeProjectTemplate: String, CaseIterable, Identifiable {
+  case blank, readingLog, notes, personalTool
+  var id: String { rawValue }
+  func title(english: Bool) -> String {
+    switch self {
+    case .blank: return english ? "Start from scratch" : "白紙から始める"
+    case .readingLog: return english ? "Reading tracker" : "読書記録"
+    case .notes: return english ? "Simple notes" : "シンプルなメモ"
+    case .personalTool: return english ? "Personal utility" : "個人用ツール"
+    }
+  }
+  func values(english: Bool) -> (title: String, goal: String, features: [String], completion: [String], validation: [String]) {
+    switch self {
+    case .blank: return ("", "", [], [], [])
+    case .readingLog: return (english ? "Reading tracker" : "読書記録", english ? "Keep a simple record of books I read." : "読んだ本を簡単に記録する。", english ? ["Add a book", "Mark it as read", "Show saved books"] : ["本を追加する", "読了を記録する", "記録した本を一覧で見る"], english ? ["I can add a book", "Records remain after restarting"] : ["本を追加できる", "再起動後も記録が残る"], english ? ["Run tests", "Add one book", "Restart and check the list"] : ["テストを実行する", "本を1冊追加する", "再起動して一覧を確認する"])
+    case .notes: return (english ? "Simple notes" : "シンプルなメモ", english ? "Save and revisit short personal notes." : "短いメモを保存して見返せるようにする。", english ? ["Create a note", "Edit a note", "Show saved notes"] : ["メモを作る", "メモを編集する", "保存済みメモを一覧で見る"], english ? ["I can create and edit a note", "Notes remain after restarting"] : ["メモを作成・編集できる", "再起動後もメモが残る"], english ? ["Run tests", "Create and edit a note", "Restart and verify"] : ["テストを実行する", "メモを作成・編集する", "再起動して確認する"])
+    case .personalTool: return (english ? "Personal utility" : "個人用ツール", english ? "Make one repetitive task easier for me." : "自分の繰り返し作業を一つ楽にする。", english ? ["Enter the needed information", "Show a useful result", "Keep data local"] : ["必要な情報を入力する", "役立つ結果を表示する", "データをこのMacに保存する"], english ? ["The main task works end to end"] : ["中心となる作業を最後まで実行できる"], english ? ["Run tests", "Try the main flow", "Restart and verify local data"] : ["テストを実行する", "中心の流れを試す", "再起動後のデータを確認する"])
+    }
+  }
+}
+
 private enum VibeValidationOutcome: String, Codable, CaseIterable, Identifiable {
   case passed, needsAttention, failed
   var id: String { rawValue }
@@ -6359,6 +6380,7 @@ private struct VibeProjectEditor: View {
   @State private var validationResultDraft = ""
   @State private var validationOutcome: VibeValidationOutcome = .passed
   @State private var handoffMessage: String?
+  @State private var selectedTemplate: VibeProjectTemplate = .blank
   @State private var proposal: VibeBuildProposal?
   @State private var sourceDirectory: String
   @State private var buildProvider: AITaskProvider = .codex
@@ -6411,6 +6433,18 @@ private struct VibeProjectEditor: View {
         }
 
         buildGuideSection
+
+        GroupBox(english ? "Start with a template" : "テンプレートから始める") {
+          HStack {
+            Picker(english ? "Template" : "テンプレート", selection: $selectedTemplate) {
+              ForEach(VibeProjectTemplate.allCases) { template in Text(template.title(english: english)).tag(template) }
+            }.pickerStyle(.menu)
+            Button(english ? "Use template" : "テンプレートを使う", systemImage: "square.on.square") { applyTemplate() }
+              .disabled(selectedTemplate == .blank)
+          }
+          Text(english ? "Templates fill the goal, features, completion checks, and validation checks. You can edit every field." : "テンプレートは目標、必須機能、完成条件、確認項目を入力します。すべて後から編集できます。")
+            .font(.caption).foregroundStyle(.secondary)
+        }
 
         GroupBox(english ? "What do you want to make?" : "何を作りたいですか？") {
           VStack(alignment: .leading, spacing: 10) {
@@ -6541,6 +6575,20 @@ private struct VibeProjectEditor: View {
     .clipShape(RoundedRectangle(cornerRadius: 10))
   }
 
+  private func applyTemplate() {
+    let values = selectedTemplate.values(english: english)
+    project.title = values.title
+    project.goal = values.goal
+    featureLines = values.features.joined(separator: "\n")
+    completionLines = values.completion.joined(separator: "\n")
+    validationLines = values.validation.joined(separator: "\n")
+    project.essentialFeatures = values.features
+    project.completionCriteria = values.completion
+    project.validationSteps = values.validation
+    proposal = nil
+    recordMemory(kind: "template", detail: english ? "Started from the \(selectedTemplate.title(english: true)) template." : "「\(selectedTemplate.title(english: false))」テンプレートから開始しました。")
+  }
+
   private func guideRow(number: Int, title: String, detail: String, complete: Bool) -> some View {
     HStack(alignment: .top, spacing: 9) {
       Image(systemName: complete ? "checkmark.circle.fill" : "(number).circle")
@@ -6634,7 +6682,7 @@ private struct VibeProjectEditor: View {
 
   private func exportProjectHandoff() {
     let panel = NSSavePanel()
-    panel.allowedContentTypes = [.markdown]
+    panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
     panel.nameFieldStringValue = "\(project.title.isEmpty ? "Onigiri-Project" : project.title)-handoff.md"
     guard panel.runModal() == .OK, let url = panel.url else { return }
     do {
