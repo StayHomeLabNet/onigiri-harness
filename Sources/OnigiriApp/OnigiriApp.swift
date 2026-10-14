@@ -758,6 +758,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var essentialFeatures: [String]
   var constraints: String
   var completionCriteria: [String]
+  var validationSteps: [String]
   var nextStep: String
   var status: VibeProjectStatus
   var proposal: VibeBuildProposal?
@@ -770,7 +771,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   init(
     id: UUID = UUID(), title: String, goal: String, audience: String,
-    essentialFeatures: [String], constraints: String, completionCriteria: [String], nextStep: String,
+    essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
     buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [],
     memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
@@ -782,6 +783,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     self.essentialFeatures = essentialFeatures
     self.constraints = constraints
     self.completionCriteria = completionCriteria
+    self.validationSteps = validationSteps
     self.nextStep = nextStep
     self.status = status
     self.proposal = proposal
@@ -795,7 +797,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
-    case status, proposal, buildRuns, decisions, openItems, memory, createdAt, updatedAt
+    case validationSteps, status, proposal, buildRuns, decisions, openItems, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
@@ -808,6 +810,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
       essentialFeatures: try values.decode([String].self, forKey: .essentialFeatures),
       constraints: try values.decode(String.self, forKey: .constraints),
       completionCriteria: try values.decode([String].self, forKey: .completionCriteria),
+      validationSteps: try values.decodeIfPresent([String].self, forKey: .validationSteps) ?? [],
       nextStep: try values.decode(String.self, forKey: .nextStep),
       status: try values.decodeIfPresent(VibeProjectStatus.self, forKey: .status) ?? .draft,
       proposal: try values.decodeIfPresent(VibeBuildProposal.self, forKey: .proposal),
@@ -6325,6 +6328,7 @@ private struct VibeProjectEditor: View {
   @State private var project: VibeProject
   @State private var featureLines: String
   @State private var completionLines: String
+  @State private var validationLines: String
   @State private var proposal: VibeBuildProposal?
   @State private var sourceDirectory: String
   @State private var buildProvider: AITaskProvider = .codex
@@ -6352,6 +6356,7 @@ private struct VibeProjectEditor: View {
     _project = State(initialValue: project)
     _featureLines = State(initialValue: project.essentialFeatures.joined(separator: "\n"))
     _completionLines = State(initialValue: project.completionCriteria.joined(separator: "\n"))
+    _validationLines = State(initialValue: project.validationSteps.joined(separator: "\n"))
     _proposal = State(initialValue: project.proposal)
     _sourceDirectory = State(initialValue: FileManager.default.homeDirectoryForCurrentUser.path)
   }
@@ -6417,6 +6422,18 @@ private struct VibeProjectEditor: View {
           .padding(.top, 4)
         }
 
+        GroupBox(english ? "Validation profile" : "完成確認プロファイル") {
+          VStack(alignment: .leading, spacing: 7) {
+            Text(english ? "List the checks to run after an AI changes files. One check per line." : "AIが変更した後に確認することを1行ずつ書きます。")
+              .font(.caption).foregroundStyle(.secondary)
+            labeledEditor(
+              english ? "Checks" : "確認項目",
+              english ? "Run the tests\nOpen the app\nTry adding one book" : "テストを実行する\nアプリを開く\n本を1冊追加する",
+              text: $validationLines, minHeight: 76)
+          }
+          .padding(.top, 4)
+        }
+
         proposalSection
         guidedBuildSection
         reviewSection
@@ -6432,6 +6449,7 @@ private struct VibeProjectEditor: View {
           Button(english ? "Save project" : "プロジェクトを保存", systemImage: "checkmark") {
             project.essentialFeatures = lines(from: featureLines)
             project.completionCriteria = lines(from: completionLines)
+            project.validationSteps = lines(from: validationLines)
             project.proposal = proposal
             save(project)
           }
@@ -6890,6 +6908,7 @@ private struct VibeProjectEditor: View {
   private func saveProjectMemory() {
     project.essentialFeatures = lines(from: featureLines)
     project.completionCriteria = lines(from: completionLines)
+    project.validationSteps = lines(from: validationLines)
     project.proposal = proposal
     save(project)
   }
@@ -6947,6 +6966,7 @@ private struct VibeProjectEditor: View {
     do {
       project.essentialFeatures = lines(from: featureLines)
       project.completionCriteria = lines(from: completionLines)
+      project.validationSteps = lines(from: validationLines)
       project.proposal = proposal
       let workspace = try VibeBuildWorkspace.prepare(sourceDirectory: sourceDirectory, projectID: project.id)
       let prompt = guidedBuildPrompt(proposal: proposal, workspace: workspace)
@@ -7126,6 +7146,9 @@ private struct VibeProjectEditor: View {
   private func guidedBuildPrompt(proposal: VibeBuildProposal, workspace: String) -> String {
     let features = proposal.screenPlan.map { "- \($0)" }.joined(separator: "\n")
     let checks = proposal.dataPlan.map { "- \($0)" }.joined(separator: "\n")
+    let validation = project.validationSteps.isEmpty
+      ? (english ? "- Run the most relevant available check." : "- 利用できる最も関連の深い確認を実行する。")
+      : project.validationSteps.map { "- \($0)" }.joined(separator: "\n")
     return """
     Work only inside the assigned workspace: \(workspace)
 
@@ -7139,6 +7162,9 @@ private struct VibeProjectEditor: View {
 
     Completion checks:
     \(checks)
+
+    Validation profile:
+    \(validation)
     """
   }
 }
