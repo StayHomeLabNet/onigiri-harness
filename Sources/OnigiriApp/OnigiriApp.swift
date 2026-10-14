@@ -6331,6 +6331,9 @@ private struct VibeProjectEditor: View {
   @State private var buildModel = ""
   @State private var preparingBuild = false
   @State private var buildMessage: String?
+  @State private var sourceCheckMessage: String?
+  @State private var checkingSource = false
+  @State private var guideExpanded = true
   @State private var selectedBuildRunID: UUID?
   @State private var buildReview: VibeBuildReview?
   @State private var reviewMessage: String?
@@ -6371,6 +6374,8 @@ private struct VibeProjectEditor: View {
           }
           .pickerStyle(.menu)
         }
+
+        buildGuideSection
 
         GroupBox(english ? "What do you want to make?" : "何を作りたいですか？") {
           VStack(alignment: .leading, spacing: 10) {
@@ -6451,6 +6456,48 @@ private struct VibeProjectEditor: View {
       while !Task.isCancelled {
         await refreshBuildRunStatuses()
         try? await Task.sleep(for: .seconds(3))
+      }
+    }
+  }
+
+  private var buildGuideSection: some View {
+    DisclosureGroup(isExpanded: $guideExpanded) {
+      VStack(alignment: .leading, spacing: 10) {
+        guideRow(
+          number: 1,
+          title: english ? "Describe the result you want" : "作りたい結果を書く",
+          detail: english ? "Give the project a name, goal, and a few essential features." : "名前、目的、必須のことを書きます。",
+          complete: !project.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !project.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        guideRow(
+          number: 2,
+          title: english ? "Check the proposed plan" : "作る計画を確認する",
+          detail: english ? "Create a proposal, then mark it Approved when its scope looks right." : "提案を作り、内容に納得したら「確認済み」にします。",
+          complete: proposal?.status == .approved)
+        guideRow(
+          number: 3,
+          title: english ? "Build safely, then choose" : "安全な場所で作り、結果を選ぶ",
+          detail: english ? "The AI works in a copy. Review its changes before applying them to your original project." : "AIはコピーの中で作業します。元のプロジェクトへの反映前に変更を確認します。",
+          complete: !project.buildRuns.isEmpty)
+      }
+      .padding(.top, 6)
+    } label: {
+      Label(english ? "How this build works" : "作り方のガイド", systemImage: "map")
+        .font(.headline)
+    }
+    .padding(12)
+    .background(Color.accentColor.opacity(0.08))
+    .clipShape(RoundedRectangle(cornerRadius: 10))
+  }
+
+  private func guideRow(number: Int, title: String, detail: String, complete: Bool) -> some View {
+    HStack(alignment: .top, spacing: 9) {
+      Image(systemName: complete ? "checkmark.circle.fill" : "(number).circle")
+        .foregroundStyle(complete ? Color.green : Color.accentColor)
+        .font(.title3)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title).font(.subheadline.weight(.semibold))
+        Text(detail).font(.caption).foregroundStyle(.secondary)
       }
     }
   }
@@ -6541,6 +6588,11 @@ private struct VibeProjectEditor: View {
     } else {
       GroupBox(english ? "Review and apply" : "確認・適用・破棄") {
         VStack(alignment: .leading, spacing: 10) {
+          Text(english
+            ? "First inspect the change. Then either apply it to your original project, undo an earlier application, or discard the isolated copy."
+            : "まず変更を確認します。納得できたら元のプロジェクトへ反映し、不要な場合は隔離したコピーを破棄できます。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
           HStack {
             Picker(english ? "Build" : "ビルド", selection: $selectedBuildRunID) {
               ForEach(project.buildRuns) { run in
@@ -6549,7 +6601,7 @@ private struct VibeProjectEditor: View {
               }
             }
             .pickerStyle(.menu)
-            Button(english ? "Inspect changes" : "変更を確認", systemImage: "doc.text.magnifyingglass") {
+            Button(english ? "Inspect changes" : "変更を確認する", systemImage: "doc.text.magnifyingglass") {
               Task { await inspectSelectedBuild() }
             }
             .disabled(reviewingBuild || selectedBuildRun == nil)
@@ -6650,6 +6702,23 @@ private struct VibeProjectEditor: View {
               .textFieldStyle(.roundedBorder)
             Button(english ? "Choose" : "選択", systemImage: "folder") { chooseSourceDirectory() }
           }
+          HStack(spacing: 8) {
+            Button(english ? "Check before starting" : "開始前の確認", systemImage: "checkmark.shield") {
+              checkSourceBeforeBuild()
+            }
+            .disabled(checkingSource || sourceDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if let sourceCheckMessage {
+              Text(sourceCheckMessage)
+                .font(.caption)
+                .foregroundStyle(sourceCheckMessage.hasPrefix(english ? "Ready" : "準備完了") ? Color.green : Color.secondary)
+                .lineLimit(2)
+            }
+          }
+          Text(english
+            ? "A Git project must have no uncommitted changes. This keeps the original folder safe."
+            : "Gitプロジェクトは、未コミットの変更がない状態で開始します。元のフォルダを守るための確認です。")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
           HStack {
             Picker(english ? "Build AI" : "実行AI", selection: $buildProvider) {
               ForEach(AITaskProvider.allCases) { provider in
@@ -6703,8 +6772,8 @@ private struct VibeProjectEditor: View {
       VStack(alignment: .leading, spacing: 12) {
         HStack {
           Text(english
-            ? "Review this before an AI starts changing files."
-            : "AIにファイル変更を依頼する前に、ここで内容を確認します。")
+            ? "This is a plain-language preview of what the AI will try to build."
+            : "AIに実装を依頼する前に、「何を作るか」を確認するためのプレビューです。")
             .font(.caption)
             .foregroundStyle(.secondary)
           Spacer()
@@ -6845,6 +6914,29 @@ private struct VibeProjectEditor: View {
     panel.allowsMultipleSelection = false
     panel.prompt = english ? "Choose" : "選択"
     if panel.runModal() == .OK, let url = panel.url { sourceDirectory = url.path }
+  }
+
+  private func checkSourceBeforeBuild() {
+    checkingSource = true
+    defer { checkingSource = false }
+    do {
+      let preflight = try VibeBuildWorkspace.preflight(sourceDirectory: sourceDirectory)
+      if preflight.sourceHasUncommittedChanges {
+        sourceCheckMessage = english
+          ? "This Git project has uncommitted changes. Commit or set them aside before starting."
+          : "このGitプロジェクトには未コミットの変更があります。開始前にコミットまたは退避してください。"
+      } else if preflight.isGitRepository {
+        sourceCheckMessage = english
+          ? "Ready: a clean Git project will be copied into an isolated workspace."
+          : "準備完了: 変更のないGitプロジェクトから隔離した作業コピーを作ります。"
+      } else {
+        sourceCheckMessage = english
+          ? "Ready: a safe copy will be created. Applying changes back is available for Git projects only."
+          : "準備完了: 安全なコピーを作ります。元への反映はGitプロジェクトで利用できます。"
+      }
+    } catch {
+      sourceCheckMessage = error.localizedDescription
+    }
   }
 
   @MainActor private func startGuidedBuild() async {
