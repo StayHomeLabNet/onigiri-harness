@@ -92,7 +92,7 @@ flowchart LR
 | 2.6 — Vibe Build Pilot Acceptance | 実施済み・2.7へ移行 | 代表プロジェクトを隔離Git worktreeとAIタスクで検証し、保存処理とタスク完了待機の改善事項を記録 |
 | 2.7 — Build Reliability & Recovery | 実装済み | 作業元の事前診断、隔離worktreeの不要情報掃除、タスク状態の自動同期、同じ隔離環境での再試行を追加 |
 | 2.8 — Vibe Build UX Refinement | 実装済み | 3段階のガイド、作業元の開始前確認、提案・レビューの平易な案内を追加 |
-| 2.9 — Vibe Build Pilot Re-Acceptance | 計画済み | 改善後の流れで、小さなプロジェクトの実装・レビュー・適用・取消を通して受入確認 |
+| 2.9 — Vibe Build Pilot Re-Acceptance | 実施済み | クリーンなGitプロジェクトで隔離worktree、変更確認、適用、取消と元のクリーン状態への復帰を確認 |
 
 完了条件:
 
