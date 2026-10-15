@@ -1367,24 +1367,41 @@ private enum VibeStatusReportSchedule: String, CaseIterable, Identifiable {
   }
 }
 
+private enum VibeStatusReportFormat: String, CaseIterable, Identifiable {
+  case markdown, csv
+  var id: String { rawValue }
+  func title(english: Bool) -> String {
+    switch self { case .markdown: return "Markdown"; case .csv: return "CSV" }
+  }
+  var fileExtension: String { self == .markdown ? "md" : "csv" }
+}
+
 @MainActor private final class VibeStatusReportStore: ObservableObject {
   static let shared = VibeStatusReportStore()
   @Published private(set) var snapshots: [VibeStatusReportSnapshot] = []
   @Published var schedule: VibeStatusReportSchedule = .off { didSet { UserDefaults.standard.set(schedule.rawValue, forKey: scheduleKey) } }
+  @Published var format: VibeStatusReportFormat = .markdown { didSet { UserDefaults.standard.set(format.rawValue, forKey: formatKey) } }
+  @Published private(set) var destinationPath: String?
   @Published private(set) var lastScheduledAt: Date?
   private let defaultsKey = "onigiri.vibeStatusReportHistory.v1"
   private let scheduleKey = "onigiri.vibeStatusReportSchedule.v1"
   private let lastScheduledKey = "onigiri.vibeStatusReportLastScheduled.v1"
+  private let formatKey = "onigiri.vibeStatusReportFormat.v1"
+  private let destinationKey = "onigiri.vibeStatusReportDestination.v1"
 
   private init() {
     guard let data = UserDefaults.standard.data(forKey: defaultsKey),
           let saved = try? JSONDecoder().decode([VibeStatusReportSnapshot].self, from: data) else {
       schedule = VibeStatusReportSchedule(rawValue: UserDefaults.standard.string(forKey: scheduleKey) ?? "") ?? .off
+      format = VibeStatusReportFormat(rawValue: UserDefaults.standard.string(forKey: formatKey) ?? "") ?? .markdown
+      destinationPath = UserDefaults.standard.string(forKey: destinationKey)
       lastScheduledAt = UserDefaults.standard.object(forKey: lastScheduledKey) as? Date
       return
     }
     snapshots = saved.sorted { $0.createdAt > $1.createdAt }
     schedule = VibeStatusReportSchedule(rawValue: UserDefaults.standard.string(forKey: scheduleKey) ?? "") ?? .off
+    format = VibeStatusReportFormat(rawValue: UserDefaults.standard.string(forKey: formatKey) ?? "") ?? .markdown
+    destinationPath = UserDefaults.standard.string(forKey: destinationKey)
     lastScheduledAt = UserDefaults.standard.object(forKey: lastScheduledKey) as? Date
   }
 
@@ -1415,6 +1432,14 @@ private enum VibeStatusReportSchedule: String, CaseIterable, Identifiable {
     lastScheduledAt = date
     UserDefaults.standard.set(date, forKey: lastScheduledKey)
   }
+
+  func setDestination(_ url: URL?) {
+    destinationPath = url?.path
+    if let url { UserDefaults.standard.set(url.path, forKey: destinationKey) }
+    else { UserDefaults.standard.removeObject(forKey: destinationKey) }
+  }
+
+  var destinationURL: URL? { destinationPath.map { URL(fileURLWithPath: $0, isDirectory: true) } }
 }
 
 private struct ChatComposerTextView: NSViewRepresentable {
@@ -6669,13 +6694,13 @@ private struct VibeProjectsView: View {
 
   private func exportStatusReport() {
     let panel = NSSavePanel()
-    panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-    panel.nameFieldStringValue = "Onigiri-Project-Status-\(Date.now.formatted(.iso8601.year().month().day())).md"
+    let format = reportStore.format
+    panel.allowedContentTypes = [UTType(filenameExtension: format.fileExtension) ?? .plainText]
+    panel.nameFieldStringValue = "Onigiri-Project-Status-\(Date.now.formatted(.iso8601.year().month().day())).\(format.fileExtension)"
     guard panel.runModal() == .OK, let url = panel.url else { return }
     let active = store.projects.filter { !$0.archived }
-    let markdown = statusReportMarkdown(projects: active)
     do {
-      try markdown.write(to: url, atomically: true, encoding: .utf8)
+      try statusReportContent(projects: active, format: format).write(to: url, atomically: true, encoding: .utf8)
       reportStore.record(projects: active)
       statusReportMessage = english ? "Saved: \(url.lastPathComponent)" : "保存しました: \(url.lastPathComponent)"
     } catch {
@@ -6687,6 +6712,11 @@ private struct VibeProjectsView: View {
     let reports = reportStore.snapshots
     return GroupBox(english ? "Status report history" : "状況レポート履歴") {
       VStack(alignment: .leading, spacing: 4) {
+        Picker(english ? "Format" : "形式", selection: $reportStore.format) {
+          ForEach(VibeStatusReportFormat.allCases) { format in
+            Text(format.title(english: english)).tag(format)
+          }
+        }.pickerStyle(.menu).font(.caption)
         Picker(english ? "Schedule" : "自動作成", selection: $reportStore.schedule) {
           ForEach(VibeStatusReportSchedule.allCases) { schedule in
             Text(schedule.title(english: english)).tag(schedule)
@@ -6695,6 +6725,17 @@ private struct VibeProjectsView: View {
         if reportStore.schedule != .off {
           Text(english ? "Reports are generated when this Projects screen is open." : "このプロジェクト画面を開いたときにレポートを自動作成します。")
             .font(.caption2).foregroundStyle(.secondary)
+        }
+        HStack {
+          Text(reportStore.destinationURL?.lastPathComponent ?? (english ? "Documents / Onigiri Harness Reports" : "書類 / Onigiri Harness Reports"))
+            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+          Spacer()
+          Button(english ? "Choose folder" : "保存先を選ぶ") { chooseReportDestination() }
+            .font(.caption)
+          if let destination = effectiveReportDestinationURL {
+            Button(english ? "Show in Finder" : "Finderで開く", systemImage: "folder") { NSWorkspace.shared.open(destination) }
+              .labelStyle(.iconOnly).help(english ? "Show in Finder" : "Finderで開く")
+          }
         }
         if let latest = reports.first {
           Text(english ? "Last report: \(latest.createdAt.formatted(date: .abbreviated, time: .shortened))" : "前回のレポート: \(latest.createdAt.formatted(date: .abbreviated, time: .shortened))")
@@ -6729,19 +6770,51 @@ private struct VibeProjectsView: View {
   private func generateScheduledReportIfNeeded() {
     guard reportStore.shouldGenerateScheduledReport() else { return }
     let active = store.projects.filter { !$0.archived }
-    guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
-    let directory = documents.appendingPathComponent("Onigiri Harness Reports", isDirectory: true)
-    let name = "Onigiri-Project-Status-\(Int(Date().timeIntervalSince1970)).md"
+    guard let directory = effectiveReportDestinationURL else { return }
+    let name = "Onigiri-Project-Status-\(Int(Date().timeIntervalSince1970)).\(reportStore.format.fileExtension)"
     let url = directory.appendingPathComponent(name)
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-      try statusReportMarkdown(projects: active).write(to: url, atomically: true, encoding: .utf8)
+      try statusReportContent(projects: active, format: reportStore.format).write(to: url, atomically: true, encoding: .utf8)
       reportStore.record(projects: active)
       reportStore.markScheduled()
       statusReportMessage = english ? "Scheduled report saved: \(url.lastPathComponent)" : "自動レポートを保存しました: \(url.lastPathComponent)"
     } catch {
       statusReportMessage = error.localizedDescription
     }
+  }
+
+  private var effectiveReportDestinationURL: URL? {
+    if let custom = reportStore.destinationURL { return custom }
+    return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+      .appendingPathComponent("Onigiri Harness Reports", isDirectory: true)
+  }
+
+  private func chooseReportDestination() {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.prompt = english ? "Use this folder" : "このフォルダを使う"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    reportStore.setDestination(url)
+  }
+
+  private func statusReportContent(projects: [VibeProject], format: VibeStatusReportFormat) -> String {
+    format == .markdown ? statusReportMarkdown(projects: projects) : statusReportCSV(projects: projects)
+  }
+
+  private func statusReportCSV(projects: [VibeProject]) -> String {
+    func escape(_ value: String) -> String { "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\"" }
+    let header = "title,status,goal,next,openItems,blockers,overdue"
+    let rows = projects.map { project in
+      let title = project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title
+      let next = project.nextActionableIssue?.title ?? project.nextStep
+      return [title, project.status.title(english: english), project.goal, next,
+              String(project.activeIssues.count), String(project.activeIssues.filter { $0.kind == .blocker }.count), String(project.overdueIssues.count)]
+        .map(escape).joined(separator: ",")
+    }
+    return ([header] + rows).joined(separator: "\n") + "\n"
   }
 
   private func statusReportMarkdown(projects: [VibeProject]) -> String {
