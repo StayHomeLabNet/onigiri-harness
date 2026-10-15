@@ -1355,15 +1355,37 @@ private struct VibeStatusReportSnapshot: Identifiable, Codable {
   var overdueCount: Int
 }
 
+private enum VibeStatusReportSchedule: String, CaseIterable, Identifiable {
+  case off, daily, weekly
+  var id: String { rawValue }
+  func title(english: Bool) -> String {
+    switch self {
+    case .off: return english ? "Manual only" : "手動のみ"
+    case .daily: return english ? "Daily" : "毎日"
+    case .weekly: return english ? "Weekly" : "毎週"
+    }
+  }
+}
+
 @MainActor private final class VibeStatusReportStore: ObservableObject {
   static let shared = VibeStatusReportStore()
   @Published private(set) var snapshots: [VibeStatusReportSnapshot] = []
+  @Published var schedule: VibeStatusReportSchedule = .off { didSet { UserDefaults.standard.set(schedule.rawValue, forKey: scheduleKey) } }
+  @Published private(set) var lastScheduledAt: Date?
   private let defaultsKey = "onigiri.vibeStatusReportHistory.v1"
+  private let scheduleKey = "onigiri.vibeStatusReportSchedule.v1"
+  private let lastScheduledKey = "onigiri.vibeStatusReportLastScheduled.v1"
 
   private init() {
     guard let data = UserDefaults.standard.data(forKey: defaultsKey),
-          let saved = try? JSONDecoder().decode([VibeStatusReportSnapshot].self, from: data) else { return }
+          let saved = try? JSONDecoder().decode([VibeStatusReportSnapshot].self, from: data) else {
+      schedule = VibeStatusReportSchedule(rawValue: UserDefaults.standard.string(forKey: scheduleKey) ?? "") ?? .off
+      lastScheduledAt = UserDefaults.standard.object(forKey: lastScheduledKey) as? Date
+      return
+    }
     snapshots = saved.sorted { $0.createdAt > $1.createdAt }
+    schedule = VibeStatusReportSchedule(rawValue: UserDefaults.standard.string(forKey: scheduleKey) ?? "") ?? .off
+    lastScheduledAt = UserDefaults.standard.object(forKey: lastScheduledKey) as? Date
   }
 
   func record(projects: [VibeProject]) {
@@ -1376,6 +1398,22 @@ private struct VibeStatusReportSnapshot: Identifiable, Codable {
     snapshots = Array(snapshots.prefix(30))
     guard let data = try? JSONEncoder().encode(snapshots) else { return }
     UserDefaults.standard.set(data, forKey: defaultsKey)
+  }
+
+  func shouldGenerateScheduledReport(now: Date = Date()) -> Bool {
+    guard schedule != .off else { return false }
+    guard let lastScheduledAt else { return true }
+    let calendar = Calendar.current
+    switch schedule {
+    case .off: return false
+    case .daily: return !calendar.isDate(lastScheduledAt, inSameDayAs: now)
+    case .weekly: return now.timeIntervalSince(lastScheduledAt) >= 7 * 24 * 60 * 60
+    }
+  }
+
+  func markScheduled(at date: Date = Date()) {
+    lastScheduledAt = date
+    UserDefaults.standard.set(date, forKey: lastScheduledKey)
   }
 }
 
@@ -6530,6 +6568,8 @@ private struct VibeProjectsView: View {
       }
     }
     .padding(20)
+    .task { generateScheduledReportIfNeeded() }
+    .onChange(of: reportStore.schedule) { _, _ in generateScheduledReportIfNeeded() }
     .sheet(item: $reviewItem) { item in
       VStack(alignment: .leading, spacing: 14) {
         Text(english ? "Review action" : "レビュー操作").font(.title3.bold())
@@ -6647,6 +6687,15 @@ private struct VibeProjectsView: View {
     let reports = reportStore.snapshots
     return GroupBox(english ? "Status report history" : "状況レポート履歴") {
       VStack(alignment: .leading, spacing: 4) {
+        Picker(english ? "Schedule" : "自動作成", selection: $reportStore.schedule) {
+          ForEach(VibeStatusReportSchedule.allCases) { schedule in
+            Text(schedule.title(english: english)).tag(schedule)
+          }
+        }.pickerStyle(.menu).font(.caption)
+        if reportStore.schedule != .off {
+          Text(english ? "Reports are generated when this Projects screen is open." : "このプロジェクト画面を開いたときにレポートを自動作成します。")
+            .font(.caption2).foregroundStyle(.secondary)
+        }
         if let latest = reports.first {
           Text(english ? "Last report: \(latest.createdAt.formatted(date: .abbreviated, time: .shortened))" : "前回のレポート: \(latest.createdAt.formatted(date: .abbreviated, time: .shortened))")
             .font(.caption).foregroundStyle(.secondary)
@@ -6674,6 +6723,24 @@ private struct VibeProjectsView: View {
       Spacer()
       Text("\(current) (\(detail))").font(.caption)
         .foregroundStyle(delta > 0 ? Color.orange : delta < 0 ? Color.green : .secondary)
+    }
+  }
+
+  private func generateScheduledReportIfNeeded() {
+    guard reportStore.shouldGenerateScheduledReport() else { return }
+    let active = store.projects.filter { !$0.archived }
+    guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+    let directory = documents.appendingPathComponent("Onigiri Harness Reports", isDirectory: true)
+    let name = "Onigiri-Project-Status-\(Int(Date().timeIntervalSince1970)).md"
+    let url = directory.appendingPathComponent(name)
+    do {
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      try statusReportMarkdown(projects: active).write(to: url, atomically: true, encoding: .utf8)
+      reportStore.record(projects: active)
+      reportStore.markScheduled()
+      statusReportMessage = english ? "Scheduled report saved: \(url.lastPathComponent)" : "自動レポートを保存しました: \(url.lastPathComponent)"
+    } catch {
+      statusReportMessage = error.localizedDescription
     }
   }
 
