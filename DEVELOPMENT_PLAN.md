@@ -113,6 +113,7 @@ flowchart LR
 | 2.28 — Project Activity Feed & Weekly Review | 実装済み | 判断・課題・ビルド・確認の履歴を横断集約し、過去7日間の活動を週次レビューとして表示 |
 | 2.29 — Project Review Actions | 実装済み | 優先課題から担当者・期限・次の一手を更新し、課題をレビュー画面から解決可能 |
 | 2.30 — Project Status Reports | 実装済み | 進捗、ブロッカー、期限、次の一手を全プロジェクト横断のMarkdownレポートとして書き出し |
+| 2.31 — Project Status Report History | 実装済み | 書き出した状況レポートの要点を保存し、前回との差分を未解決事項・ブロッカー・期限超過で比較 |
 
 完了条件:
 

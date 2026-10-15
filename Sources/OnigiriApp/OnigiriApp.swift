@@ -1346,6 +1346,39 @@ private struct VibeBuildProposal: Codable, Equatable {
   }
 }
 
+private struct VibeStatusReportSnapshot: Identifiable, Codable {
+  var id: UUID = UUID()
+  var createdAt: Date = Date()
+  var projectCount: Int
+  var openItemCount: Int
+  var blockerCount: Int
+  var overdueCount: Int
+}
+
+@MainActor private final class VibeStatusReportStore: ObservableObject {
+  static let shared = VibeStatusReportStore()
+  @Published private(set) var snapshots: [VibeStatusReportSnapshot] = []
+  private let defaultsKey = "onigiri.vibeStatusReportHistory.v1"
+
+  private init() {
+    guard let data = UserDefaults.standard.data(forKey: defaultsKey),
+          let saved = try? JSONDecoder().decode([VibeStatusReportSnapshot].self, from: data) else { return }
+    snapshots = saved.sorted { $0.createdAt > $1.createdAt }
+  }
+
+  func record(projects: [VibeProject]) {
+    let snapshot = VibeStatusReportSnapshot(
+      projectCount: projects.count,
+      openItemCount: projects.reduce(0) { $0 + $1.activeIssues.count },
+      blockerCount: projects.reduce(0) { $0 + $1.activeIssues.filter { $0.kind == .blocker }.count },
+      overdueCount: projects.reduce(0) { $0 + $1.overdueIssues.count })
+    snapshots.insert(snapshot, at: 0)
+    snapshots = Array(snapshots.prefix(30))
+    guard let data = try? JSONEncoder().encode(snapshots) else { return }
+    UserDefaults.standard.set(data, forKey: defaultsKey)
+  }
+}
+
 private struct ChatComposerTextView: NSViewRepresentable {
   @Binding var text: String
   let isEnabled: Bool
@@ -6443,6 +6476,7 @@ private struct VibeProjectsView: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(\.locale) private var locale
   @StateObject private var store = VibeProjectStore.shared
+  @StateObject private var reportStore = VibeStatusReportStore.shared
   @State private var selectedProjectID: UUID?
   @State private var showsArchive = false
   @State private var portfolioQuery = ""
@@ -6551,6 +6585,7 @@ private struct VibeProjectsView: View {
       } else {
         dailyFocusSection
         weeklyActivitySection
+        statusReportHistorySection
       }
       let visibleProjects = store.projects.filter { project in
         guard showsArchive ? project.archived : !project.archived else { return false }
@@ -6601,9 +6636,44 @@ private struct VibeProjectsView: View {
     let markdown = statusReportMarkdown(projects: active)
     do {
       try markdown.write(to: url, atomically: true, encoding: .utf8)
+      reportStore.record(projects: active)
       statusReportMessage = english ? "Saved: \(url.lastPathComponent)" : "保存しました: \(url.lastPathComponent)"
     } catch {
       statusReportMessage = error.localizedDescription
+    }
+  }
+
+  private var statusReportHistorySection: some View {
+    let reports = reportStore.snapshots
+    return GroupBox(english ? "Status report history" : "状況レポート履歴") {
+      VStack(alignment: .leading, spacing: 4) {
+        if let latest = reports.first {
+          Text(english ? "Last report: \(latest.createdAt.formatted(date: .abbreviated, time: .shortened))" : "前回のレポート: \(latest.createdAt.formatted(date: .abbreviated, time: .shortened))")
+            .font(.caption).foregroundStyle(.secondary)
+          if let previous = reports.dropFirst().first {
+            reportDeltaRow(title: english ? "Open items" : "未解決事項", current: latest.openItemCount, previous: previous.openItemCount)
+            reportDeltaRow(title: english ? "Blockers" : "ブロッカー", current: latest.blockerCount, previous: previous.blockerCount)
+            reportDeltaRow(title: english ? "Overdue" : "期限超過", current: latest.overdueCount, previous: previous.overdueCount)
+          } else {
+            Text(english ? "Export another report to compare changes." : "次のレポートを書き出すと、前回からの変化を比較できます。")
+              .font(.caption2).foregroundStyle(.secondary)
+          }
+        } else {
+          Text(english ? "Export a status report to begin the history." : "状況レポートを書き出すと、ここに履歴を保存します。")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+      }.padding(.top, 3)
+    }
+  }
+
+  private func reportDeltaRow(title: String, current: Int, previous: Int) -> some View {
+    let delta = current - previous
+    let detail = delta == 0 ? (english ? "no change" : "変化なし") : (delta > 0 ? "+\(delta)" : "\(delta)")
+    return HStack {
+      Text(title).font(.caption)
+      Spacer()
+      Text("\(current) (\(detail))").font(.caption)
+        .foregroundStyle(delta > 0 ? Color.orange : delta < 0 ? Color.green : .secondary)
     }
   }
 
