@@ -104,6 +104,7 @@ flowchart LR
 | 2.19 — Portfolio Export & Review Report | 実装済み | アーカイブ済みプロジェクトをMarkdown/CSVで書き出し |
 | 2.20 — Project Restore & Reopen Flow | 実装済み | アーカイブしたプロジェクトを次の一手とともに作業中へ復元 |
 | 2.21 — Project Timeline & Milestones | 実装済み | 計画、ビルド、確認、完成、保管、再開の出来事を時系列表示 |
+| 2.22 — Milestone Notes & Decisions | 実装済み | 判断理由や次回への注意点を節目メモとして時系列へ保存 |
 
 完了条件:
 

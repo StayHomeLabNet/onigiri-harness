@@ -6489,6 +6489,7 @@ private struct VibeProjectEditor: View {
   @StateObject private var templateStore = VibeTemplateStore.shared
   @State private var selectedCustomTemplateID: UUID?
   @State private var customTemplateName = ""
+  @State private var milestoneNoteDraft = ""
   @State private var proposal: VibeBuildProposal?
   @State private var sourceDirectory: String
   @State private var buildProvider: AITaskProvider = .codex
@@ -6873,9 +6874,25 @@ private struct VibeProjectEditor: View {
               }
             }
           }
+          HStack {
+            TextField(english ? "Why was this decision made?" : "なぜこの判断をしたか、次回への注意点", text: $milestoneNoteDraft)
+              .textFieldStyle(.roundedBorder)
+            Button(english ? "Add note" : "節目メモを追加", systemImage: "pin") {
+              addMilestoneNote()
+            }
+            .disabled(milestoneNoteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          }
         }.padding(.top, 4)
       }
     }
+  }
+
+  private func addMilestoneNote() {
+    let note = milestoneNoteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !note.isEmpty else { return }
+    recordMemory(kind: "milestone", detail: english ? "Milestone note: \(note)" : "節目メモ: \(note)")
+    milestoneNoteDraft = ""
+    saveProjectMemory()
   }
 
   private func exportProjectHandoff() {
@@ -7331,6 +7348,7 @@ private struct VibeProjectEditor: View {
     case "archive": return "archivebox"
     case "reopen": return "tray.and.arrow.up"
     case "template": return "square.on.square"
+    case "milestone": return "pin"
     default: return "clock"
     }
   }
