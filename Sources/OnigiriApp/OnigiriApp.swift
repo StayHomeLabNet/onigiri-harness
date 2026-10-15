@@ -717,12 +717,36 @@ private struct StoredConversation: Identifiable, Equatable, Codable {
   var updatedAt: Date
   var messages: [DisplayMessage]
   var profileID: UUID?
+  var projectID: UUID?
   var contextResetAfterMessageID: UUID?
+
+  init(id: UUID, title: String, updatedAt: Date, messages: [DisplayMessage], profileID: UUID?, projectID: UUID? = nil, contextResetAfterMessageID: UUID?) {
+    self.id = id
+    self.title = title
+    self.updatedAt = updatedAt
+    self.messages = messages
+    self.profileID = profileID
+    self.projectID = projectID
+    self.contextResetAfterMessageID = contextResetAfterMessageID
+  }
+
+  private enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, profileID, projectID, contextResetAfterMessageID }
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try values.decode(UUID.self, forKey: .id),
+      title: try values.decode(String.self, forKey: .title),
+      updatedAt: try values.decode(Date.self, forKey: .updatedAt),
+      messages: try values.decode([DisplayMessage].self, forKey: .messages),
+      profileID: try values.decodeIfPresent(UUID.self, forKey: .profileID),
+      projectID: try values.decodeIfPresent(UUID.self, forKey: .projectID),
+      contextResetAfterMessageID: try values.decodeIfPresent(UUID.self, forKey: .contextResetAfterMessageID))
+  }
 
   static var empty: StoredConversation {
     StoredConversation(
       id: UUID(), title: "新しい会話", updatedAt: Date(), messages: [], profileID: nil,
-      contextResetAfterMessageID: nil)
+      projectID: nil, contextResetAfterMessageID: nil)
   }
 }
 
@@ -1895,6 +1919,7 @@ private func copyToPasteboard(_ text: String) {
 struct ChatView: View {
   @Environment(\.locale) private var locale
   @Environment(\.openWindow) private var openWindow
+  @StateObject private var vibeProjectStore = VibeProjectStore.shared
   @State private var conversations: [StoredConversation] = [.empty]
   @State private var selectedConversationID: UUID?
   @State private var draft = "こんにちは"
@@ -1973,6 +1998,29 @@ struct ChatView: View {
   private var selectedConversation: StoredConversation? {
     guard let selectedConversationID else { return nil }
     return conversations.first { $0.id == selectedConversationID }
+  }
+
+  private var selectedChatProject: VibeProject? {
+    guard let projectID = selectedConversation?.projectID else { return nil }
+    return vibeProjectStore.projects.first { $0.id == projectID }
+  }
+
+  private var effectiveSystemInstructions: String {
+    guard let project = selectedChatProject else { return systemInstructions }
+    let memory = project.explicitMemory
+    var sections = [
+      "Project context:\nTitle: \(project.title)\nGoal: \(project.goal)\nNext step: \(project.nextActionableIssue?.title ?? project.nextStep)"
+    ]
+    if memory.applyToChat {
+      let instructions = memory.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !instructions.isEmpty { sections.append("Always-follow project instructions:\n\(instructions)") }
+      let assumptions = memory.assumptions.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !assumptions.isEmpty { sections.append("Known project assumptions:\n\(assumptions)") }
+      if !memory.excludedInformation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        sections.append("Do not request, use, or expose information marked as excluded in the project memory. The excluded details are intentionally not included here.")
+      }
+    }
+    return systemInstructions + "\n\n" + sections.joined(separator: "\n\n")
   }
 
   private var conversationID: UUID {
@@ -2530,6 +2578,28 @@ struct ChatView: View {
       .controlSize(.small)
 
       HStack(spacing: 10) {
+        Text("プロジェクト")
+          .font(.headline)
+        Picker("プロジェクト", selection: Binding(
+          get: { selectedConversation?.projectID },
+          set: { assignProjectToSelectedConversation($0) }
+        )) {
+          Text("なし").tag(Optional<UUID>.none)
+          ForEach(vibeProjectStore.projects.filter { !$0.archived }) { project in
+            Text(project.title.isEmpty ? "名称未設定" : project.title).tag(Optional(project.id))
+          }
+        }
+        .labelsHidden()
+        .frame(width: 220)
+        if let project = selectedChatProject {
+          Label(project.explicitMemory.applyToChat ? "メモリーを適用" : "プロジェクト情報のみ", systemImage: project.explicitMemory.applyToChat ? "brain" : "folder")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        Spacer(minLength: 8)
+      }
+      .controlSize(.small)
+
+      HStack(spacing: 10) {
         Text("モデル")
           .font(.headline)
 
@@ -2772,6 +2842,17 @@ struct ChatView: View {
       let index = conversations.firstIndex(where: { $0.id == conversationID })
     else { return }
     conversations[index].profileID = profileID
+    saveConversations()
+  }
+
+  @MainActor private func assignProjectToSelectedConversation(_ projectID: UUID?) {
+    guard let conversationID = selectedConversationID,
+      let index = conversations.firstIndex(where: { $0.id == conversationID })
+    else { return }
+    if conversations[index].projectID != projectID {
+      conversations[index].contextResetAfterMessageID = conversations[index].messages.last?.id
+    }
+    conversations[index].projectID = projectID
     saveConversations()
   }
 
@@ -4662,7 +4743,7 @@ struct ChatView: View {
         profileID: sourceProfile?.id, profileName: sourceProfile?.name ?? "Current settings",
         providerID: selectedProviderID, modelID: modelID,
         runtime: ChatRuntimeOptions(
-          systemInstructions: systemInstructions, ragMode: selectedRAGMode,
+          systemInstructions: effectiveSystemInstructions, ragMode: selectedRAGMode,
           searchSettings: currentSearchSettings, contextLimit: contextLimit),
         replays: [])
       appendMessage(DisplayMessage(role: .user, content: input), to: activeConversationID)
@@ -4686,7 +4767,7 @@ struct ChatView: View {
           selectedChunkIDs: selectedMatches.isEmpty ? nil : selectedMatches.map(\.id),
           webSources: selectedWebSources,
           runtime: ChatRuntimeOptions(
-            systemInstructions: systemInstructions, ragMode: selectedRAGMode,
+          systemInstructions: effectiveSystemInstructions, ragMode: selectedRAGMode,
             searchSettings: currentSearchSettings, contextLimit: contextLimit)
         ))
 

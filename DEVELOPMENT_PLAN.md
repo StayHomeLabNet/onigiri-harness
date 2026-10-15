@@ -118,6 +118,7 @@ flowchart LR
 | 2.33 — Project Report Destinations & Sharing | 実装済み | 保存先を選択しFinderで開き、MarkdownまたはCSV形式で状況レポートを共有可能 |
 | 2.34 — Project Report Templates | 実装済み | 日次確認・週次レビュー・共有用サマリーから用途別にレポート内容を選択 |
 | 2.35 — Explicit Project Memory | 実装済み | プロジェクト固有の指示・前提・除外情報を明示保存し、AIビルドタスクへ安全に適用 |
+| 2.36 — Project-Scoped Chat Context | 実装済み | 会話ごとにプロジェクトを選択し、目標と明示メモリーを安全にチャットへ適用 |
 
 完了条件:
 
