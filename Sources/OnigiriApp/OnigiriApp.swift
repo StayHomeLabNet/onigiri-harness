@@ -6542,6 +6542,7 @@ private struct VibeProjectEditor: View {
         }
 
         buildGuideSection
+        projectHealthSection
 
         GroupBox(english ? "Start with a template" : "テンプレートから始める") {
           VStack(alignment: .leading, spacing: 9) {
@@ -6703,6 +6704,27 @@ private struct VibeProjectEditor: View {
     .padding(12)
     .background(Color.accentColor.opacity(0.08))
     .clipShape(RoundedRectangle(cornerRadius: 10))
+  }
+
+  private var projectHealthSection: some View {
+    let hasGoal = !project.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let approved = proposal?.status == .approved
+    let needsAttention = project.validationResults.contains { $0.outcome != .passed }
+    let next = !hasGoal ? (english ? "Write the goal first." : "まず目標を書きます。")
+      : !approved ? (english ? "Create and approve the build plan." : "作る計画を作成して確認します。")
+      : needsAttention ? (english ? "Resolve the checks that need attention." : "要確認の結果に対応します。")
+      : project.openItems.first ?? (english ? "Review readiness before marking complete." : "完成の準備状況を確認します。")
+    return GroupBox(english ? "Project health" : "プロジェクトの状態") {
+      VStack(alignment: .leading, spacing: 6) {
+        Label(hasGoal ? (english ? "Goal is defined" : "目標を設定済み") : (english ? "Goal needs attention" : "目標を入力してください"), systemImage: hasGoal ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+          .foregroundStyle(hasGoal ? Color.green : .orange)
+        Label(approved ? (english ? "Build plan is approved" : "作る計画を確認済み") : (english ? "Build plan is not approved" : "作る計画は未確認"), systemImage: approved ? "checkmark.circle.fill" : "circle")
+          .foregroundStyle(approved ? Color.green : .secondary)
+        Label(project.openItems.isEmpty ? (english ? "No open items" : "未解決事項はありません") : (english ? "\(project.openItems.count) open items" : "未解決事項 \(project.openItems.count) 件"), systemImage: project.openItems.isEmpty ? "checkmark.circle.fill" : "questionmark.circle.fill")
+          .foregroundStyle(project.openItems.isEmpty ? Color.green : .orange)
+        Text((english ? "Next: " : "次にすること: ") + next).font(.caption).foregroundStyle(.secondary)
+      }.padding(.top, 3)
+    }
   }
 
   private func applyTemplate() {

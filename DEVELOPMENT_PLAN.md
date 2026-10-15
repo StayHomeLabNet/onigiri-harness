@@ -105,6 +105,7 @@ flowchart LR
 | 2.20 — Project Restore & Reopen Flow | 実装済み | アーカイブしたプロジェクトを次の一手とともに作業中へ復元 |
 | 2.21 — Project Timeline & Milestones | 実装済み | 計画、ビルド、確認、完成、保管、再開の出来事を時系列表示 |
 | 2.22 — Milestone Notes & Decisions | 実装済み | 判断理由や次回への注意点を節目メモとして時系列へ保存 |
+| 2.23 — Project Health Dashboard | 実装済み | 目標・計画・検証・未解決事項から次に進める作業を表示 |
 
 完了条件:
 
