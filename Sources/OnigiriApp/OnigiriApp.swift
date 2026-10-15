@@ -6330,6 +6330,7 @@ private struct VibeProjectsView: View {
   @State private var showsArchive = false
   @State private var portfolioQuery = ""
   @State private var portfolioFilter = "all"
+  @State private var portfolioExportMessage: String?
 
   private var english: Bool { locale.language.languageCode?.identifier == "en" }
   private var selectedProject: VibeProject? {
@@ -6440,11 +6441,35 @@ private struct VibeProjectsView: View {
       Label(english ? "\(passed) checks passed" : "確認済み \(passed) 件", systemImage: "checkmark.circle")
       if attention > 0 { Label(english ? "\(attention) checks need attention" : "要確認 \(attention) 件", systemImage: "exclamationmark.circle").foregroundStyle(.orange) }
       if openItems > 0 { Label(english ? "\(openItems) open items" : "未解決事項 \(openItems) 件", systemImage: "questionmark.circle").foregroundStyle(.secondary) }
+      HStack {
+        Button("Markdown", systemImage: "doc.richtext") { exportPortfolio(csv: false) }
+        Button("CSV", systemImage: "tablecells") { exportPortfolio(csv: true) }
+        if let portfolioExportMessage { Text(portfolioExportMessage).foregroundStyle(.secondary) }
+      }
     }
     .font(.caption)
     .padding(10)
     .background(Color.secondary.opacity(0.08))
     .clipShape(RoundedRectangle(cornerRadius: 8))
+  }
+
+  private func exportPortfolio(csv: Bool) {
+    let projects = store.projects.filter { $0.archived }
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [UTType(filenameExtension: csv ? "csv" : "md") ?? .plainText]
+    panel.nameFieldStringValue = csv ? "onigiri-portfolio.csv" : "onigiri-portfolio.md"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    let content: String
+    if csv {
+      content = (["title,status,passed,attention,openItems"] + projects.map { project in
+        let passed = project.validationResults.filter { $0.outcome == .passed }.count
+        let attention = project.validationResults.filter { $0.outcome != .passed }.count
+        return "\"\(project.title.replacingOccurrences(of: "\"", with: "\"\""))\",\(project.status.rawValue),\(passed),\(attention),\(project.openItems.count)"
+      }).joined(separator: "\n")
+    } else {
+      content = "# \(english ? "Onigiri Portfolio" : "Onigiri ポートフォリオ")\n\n" + projects.map { "## \($0.title)\n\($0.goal)\n- \(english ? "Open items" : "未解決事項"): \($0.openItems.count)" }.joined(separator: "\n\n")
+    }
+    do { try content.write(to: url, atomically: true, encoding: .utf8); portfolioExportMessage = english ? "Saved" : "保存しました" } catch { portfolioExportMessage = error.localizedDescription }
   }
 }
 
