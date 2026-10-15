@@ -7247,6 +7247,7 @@ private struct VibeProjectEditor: View {
   @State private var issueOwner = ""
   @State private var hasIssueDueDate = false
   @State private var issueDueDate = Date()
+  @State private var selectedCoordinatorIssueID: UUID?
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -7284,6 +7285,7 @@ private struct VibeProjectEditor: View {
         buildGuideSection
         projectHealthSection
         explicitMemorySection
+        projectCoordinatorSection
 
         GroupBox(english ? "Start with a template" : "テンプレートから始める") {
           VStack(alignment: .leading, spacing: 9) {
@@ -7513,6 +7515,57 @@ private struct VibeProjectEditor: View {
           ? "Build tasks use this memory now. Chat and RAG scopes are saved for a later project-selection connection."
           : "AIビルドタスクには今すぐ適用されます。チャットとRAGの範囲は、次のプロジェクト選択連携に備えて保存されます。")
           .font(.caption2).foregroundStyle(.secondary)
+      }.padding(.top, 3)
+    }
+  }
+
+  private var projectCoordinatorSection: some View {
+    let ready = project.readyIssues
+    let selectedID = selectedCoordinatorIssueID ?? ready.first?.id
+    let selected = ready.first { $0.id == selectedID }
+    return GroupBox(english ? "Project coordinator" : "プロジェクト・コーディネーター") {
+      VStack(alignment: .leading, spacing: 8) {
+        Text(english
+          ? "Choose one dependency-ready item. Onigiri sends it to an isolated AI build and keeps the next items waiting until you review the result."
+          : "依存関係を満たした課題を1件選びます。Onigiriは隔離AIビルドへ委任し、結果を確認するまで次の課題を待機させます。")
+          .font(.caption).foregroundStyle(.secondary)
+        if ready.isEmpty {
+          Label(project.activeIssues.isEmpty
+            ? (english ? "No open items to coordinate" : "調整する未解決事項はありません")
+            : (english ? "All open items are waiting on dependencies" : "すべての未解決事項が依存関係待ちです"),
+            systemImage: project.activeIssues.isEmpty ? "checkmark.circle" : "arrow.triangle.branch")
+            .font(.caption).foregroundStyle(.secondary)
+        } else {
+          Picker(english ? "Next coordinated item" : "次に委任する課題", selection: Binding(
+            get: { selectedID }, set: { selectedCoordinatorIssueID = $0 })) {
+            ForEach(ready) { issue in
+              Text(issue.summary(english: english)).tag(Optional(issue.id))
+            }
+          }
+          .pickerStyle(.menu)
+          HStack {
+            Button(english ? "Set as next step" : "次にすることへ設定", systemImage: "arrow.right.circle") {
+              guard let selected else { return }
+              project.nextStep = selected.title
+              recordMemory(kind: "coordinator", detail: english ? "Coordinator selected: \(selected.title)." : "コーディネーターが次の課題に設定: \(selected.title)")
+              saveProjectMemory()
+            }
+            if let selected, proposal?.status == .approved {
+              Button(english ? "Delegate isolated build" : "隔離ビルドへ委任", systemImage: "person.badge.clock") {
+                Task { await startGuidedBuild(for: selected) }
+              }
+              .buttonStyle(.borderedProminent)
+              .disabled(preparingBuild || sourceDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } else if proposal?.status != .approved {
+              Text(english ? "Approve the build proposal to delegate work." : "作る計画を確認済みにすると、AIへ委任できます。")
+                .font(.caption2).foregroundStyle(.secondary)
+            }
+          }
+        }
+        if !project.dependencyBlockedIssues.isEmpty {
+          Text(english ? "Waiting on dependencies: \(project.dependencyBlockedIssues.map(\.title).joined(separator: ", "))" : "依存関係待ち: \(project.dependencyBlockedIssues.map(\.title).joined(separator: "、"))")
+            .font(.caption2).foregroundStyle(.orange).lineLimit(2)
+        }
       }.padding(.top, 3)
     }
   }
@@ -8304,7 +8357,7 @@ private struct VibeProjectEditor: View {
     }
   }
 
-  @MainActor private func startGuidedBuild() async {
+  @MainActor private func startGuidedBuild(for coordinatorIssue: VibeProjectIssue? = nil) async {
     guard let proposal, proposal.status == .approved else { return }
     preparingBuild = true
     buildMessage = english ? "Preparing an isolated workspace…" : "隔離した作業コピーを準備しています…"
@@ -8315,7 +8368,7 @@ private struct VibeProjectEditor: View {
       project.validationSteps = lines(from: validationLines)
       project.proposal = proposal
       let workspace = try VibeBuildWorkspace.prepare(sourceDirectory: sourceDirectory, projectID: project.id)
-      let prompt = guidedBuildPrompt(proposal: proposal, workspace: workspace)
+      let prompt = guidedBuildPrompt(proposal: proposal, workspace: workspace, coordinatorIssue: coordinatorIssue)
       var request = URLRequest(url: OnigiriEndpoint.url("agents/tasks"))
       request.httpMethod = "POST"
       request.timeoutInterval = 15
@@ -8336,8 +8389,8 @@ private struct VibeProjectEditor: View {
       recordMemory(
         kind: "build",
         detail: english
-          ? "Started an isolated \(buildProvider.name) build."
-          : "\(buildProvider.name)で隔離ビルドを開始しました。")
+          ? "Started an isolated \(buildProvider.name) build\(coordinatorIssue.map { " for \($0.title)" } ?? "")."
+          : "\(buildProvider.name)で隔離ビルドを開始しました\(coordinatorIssue.map { "（\($0.title)）" } ?? "")。")
       save(project)
       buildMessage = english ? "Build started in an isolated workspace." : "隔離した作業コピーでビルドを開始しました。"
     } catch {
@@ -8499,13 +8552,16 @@ private struct VibeProjectEditor: View {
     return try JSONDecoder().decode(CodexTaskListResponse.self, from: data).tasks.first { $0.id == id }
   }
 
-  private func guidedBuildPrompt(proposal: VibeBuildProposal, workspace: String) -> String {
+  private func guidedBuildPrompt(proposal: VibeBuildProposal, workspace: String, coordinatorIssue: VibeProjectIssue? = nil) -> String {
     let features = proposal.screenPlan.map { "- \($0)" }.joined(separator: "\n")
     let checks = proposal.dataPlan.map { "- \($0)" }.joined(separator: "\n")
     let validation = project.validationSteps.isEmpty
       ? (english ? "- Run the most relevant available check." : "- 利用できる最も関連の深い確認を実行する。")
       : project.validationSteps.map { "- \($0)" }.joined(separator: "\n")
     let explicitMemory = explicitMemoryForBuildPrompt()
+    let coordinatorTask = coordinatorIssue.map {
+      "\nCoordinator-assigned task:\nFocus this build on: \($0.title)\nType: \($0.kind.title(english: true)) · Priority: \($0.priority.title(english: true))\nDo not begin dependent work beyond what is necessary for this task."
+    } ?? ""
     return """
     Work only inside the assigned workspace: \(workspace)
 
@@ -8522,6 +8578,7 @@ private struct VibeProjectEditor: View {
 
     Validation profile:
     \(validation)
+    \(coordinatorTask)
     \(explicitMemory)
     """
   }
