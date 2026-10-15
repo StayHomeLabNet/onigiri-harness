@@ -860,6 +860,38 @@ private enum VibeProjectTemplate: String, CaseIterable, Identifiable {
   }
 }
 
+private struct VibeCustomTemplate: Identifiable, Codable, Equatable {
+  var id: UUID = UUID()
+  var name: String
+  var goal: String
+  var features: [String]
+  var completion: [String]
+  var validation: [String]
+}
+
+@MainActor private final class VibeTemplateStore: ObservableObject {
+  static let shared = VibeTemplateStore()
+  @Published private(set) var templates: [VibeCustomTemplate] = []
+  private let defaultsKey = "onigiri.vibeCustomTemplates.v1"
+
+  private init() {
+    if let data = UserDefaults.standard.data(forKey: defaultsKey),
+      let saved = try? JSONDecoder().decode([VibeCustomTemplate].self, from: data)
+    { templates = saved }
+  }
+
+  func save(_ template: VibeCustomTemplate) {
+    templates.removeAll { $0.name.caseInsensitiveCompare(template.name) == .orderedSame }
+    templates.insert(template, at: 0)
+    UserDefaults.standard.set(try? JSONEncoder().encode(templates), forKey: defaultsKey)
+  }
+
+  func remove(_ id: UUID) {
+    templates.removeAll { $0.id == id }
+    UserDefaults.standard.set(try? JSONEncoder().encode(templates), forKey: defaultsKey)
+  }
+}
+
 private enum VibeValidationOutcome: String, Codable, CaseIterable, Identifiable {
   case passed, needsAttention, failed
   var id: String { rawValue }
@@ -6381,6 +6413,9 @@ private struct VibeProjectEditor: View {
   @State private var validationOutcome: VibeValidationOutcome = .passed
   @State private var handoffMessage: String?
   @State private var selectedTemplate: VibeProjectTemplate = .blank
+  @StateObject private var templateStore = VibeTemplateStore.shared
+  @State private var selectedCustomTemplateID: UUID?
+  @State private var customTemplateName = ""
   @State private var proposal: VibeBuildProposal?
   @State private var sourceDirectory: String
   @State private var buildProvider: AITaskProvider = .codex
@@ -6435,6 +6470,7 @@ private struct VibeProjectEditor: View {
         buildGuideSection
 
         GroupBox(english ? "Start with a template" : "テンプレートから始める") {
+          VStack(alignment: .leading, spacing: 9) {
           HStack {
             Picker(english ? "Template" : "テンプレート", selection: $selectedTemplate) {
               ForEach(VibeProjectTemplate.allCases) { template in Text(template.title(english: english)).tag(template) }
@@ -6442,8 +6478,27 @@ private struct VibeProjectEditor: View {
             Button(english ? "Use template" : "テンプレートを使う", systemImage: "square.on.square") { applyTemplate() }
               .disabled(selectedTemplate == .blank)
           }
+          if !templateStore.templates.isEmpty {
+            HStack {
+              Picker(english ? "Your templates" : "保存したテンプレート", selection: $selectedCustomTemplateID) {
+                Text(english ? "Choose" : "選択").tag(Optional<UUID>.none)
+                ForEach(templateStore.templates) { template in Text(template.name).tag(Optional(template.id)) }
+              }.pickerStyle(.menu)
+              Button(english ? "Use saved template" : "保存済みを使う", systemImage: "tray.and.arrow.down") { applyCustomTemplate() }
+                .disabled(selectedCustomTemplateID == nil)
+              Button(english ? "Remove" : "削除", systemImage: "trash", role: .destructive) {
+                if let id = selectedCustomTemplateID { templateStore.remove(id); selectedCustomTemplateID = nil }
+              }.disabled(selectedCustomTemplateID == nil)
+            }
+          }
+          HStack {
+            TextField(english ? "Name for this template" : "このテンプレートの名前", text: $customTemplateName).textFieldStyle(.roundedBorder)
+            Button(english ? "Save current as template" : "現在の内容を保存", systemImage: "bookmark") { saveCustomTemplate() }
+              .disabled(customTemplateName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          }
           Text(english ? "Templates fill the goal, features, completion checks, and validation checks. You can edit every field." : "テンプレートは目標、必須機能、完成条件、確認項目を入力します。すべて後から編集できます。")
             .font(.caption).foregroundStyle(.secondary)
+          }
         }
 
         GroupBox(english ? "What do you want to make?" : "何を作りたいですか？") {
@@ -6587,6 +6642,33 @@ private struct VibeProjectEditor: View {
     project.validationSteps = values.validation
     proposal = nil
     recordMemory(kind: "template", detail: english ? "Started from the \(selectedTemplate.title(english: true)) template." : "「\(selectedTemplate.title(english: false))」テンプレートから開始しました。")
+  }
+
+  private func applyCustomTemplate() {
+    guard let id = selectedCustomTemplateID,
+      let template = templateStore.templates.first(where: { $0.id == id }) else { return }
+    project.title = template.name
+    project.goal = template.goal
+    project.essentialFeatures = template.features
+    project.completionCriteria = template.completion
+    project.validationSteps = template.validation
+    featureLines = template.features.joined(separator: "\n")
+    completionLines = template.completion.joined(separator: "\n")
+    validationLines = template.validation.joined(separator: "\n")
+    proposal = nil
+    recordMemory(kind: "template", detail: english ? "Started from the saved \(template.name) template." : "保存済みの「\(template.name)」テンプレートから開始しました。")
+  }
+
+  private func saveCustomTemplate() {
+    let name = customTemplateName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else { return }
+    let template = VibeCustomTemplate(
+      name: name, goal: project.goal, features: lines(from: featureLines),
+      completion: lines(from: completionLines), validation: lines(from: validationLines))
+    templateStore.save(template)
+    selectedCustomTemplateID = template.id
+    customTemplateName = ""
+    recordMemory(kind: "template", detail: english ? "Saved a reusable \(name) template." : "再利用用の「\(name)」テンプレートを保存しました。")
   }
 
   private func guideRow(number: Int, title: String, detail: String, complete: Bool) -> some View {
