@@ -1073,6 +1073,41 @@ private struct VibeBuildRun: Identifiable, Codable, Equatable {
   var detail: String
   var appliedAt: Date?
   var revertedAt: Date?
+  var coordinatorIssueID: UUID?
+  var reviewedAt: Date?
+
+  init(id: UUID = UUID(), provider: AITaskProvider, sourceDirectory: String, workspaceDirectory: String, taskID: UUID? = nil, startedAt: Date = Date(), status: String, detail: String, appliedAt: Date? = nil, revertedAt: Date? = nil, coordinatorIssueID: UUID? = nil, reviewedAt: Date? = nil) {
+    self.id = id
+    self.provider = provider
+    self.sourceDirectory = sourceDirectory
+    self.workspaceDirectory = workspaceDirectory
+    self.taskID = taskID
+    self.startedAt = startedAt
+    self.status = status
+    self.detail = detail
+    self.appliedAt = appliedAt
+    self.revertedAt = revertedAt
+    self.coordinatorIssueID = coordinatorIssueID
+    self.reviewedAt = reviewedAt
+  }
+
+  private enum CodingKeys: String, CodingKey { case id, provider, sourceDirectory, workspaceDirectory, taskID, startedAt, status, detail, appliedAt, revertedAt, coordinatorIssueID, reviewedAt }
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
+      provider: try values.decode(AITaskProvider.self, forKey: .provider),
+      sourceDirectory: try values.decode(String.self, forKey: .sourceDirectory),
+      workspaceDirectory: try values.decode(String.self, forKey: .workspaceDirectory),
+      taskID: try values.decodeIfPresent(UUID.self, forKey: .taskID),
+      startedAt: try values.decodeIfPresent(Date.self, forKey: .startedAt) ?? Date(),
+      status: try values.decode(String.self, forKey: .status),
+      detail: try values.decode(String.self, forKey: .detail),
+      appliedAt: try values.decodeIfPresent(Date.self, forKey: .appliedAt),
+      revertedAt: try values.decodeIfPresent(Date.self, forKey: .revertedAt),
+      coordinatorIssueID: try values.decodeIfPresent(UUID.self, forKey: .coordinatorIssueID),
+      reviewedAt: try values.decodeIfPresent(Date.self, forKey: .reviewedAt))
+  }
 }
 
 private struct VibeBuildReview {
@@ -7566,6 +7601,35 @@ private struct VibeProjectEditor: View {
           Text(english ? "Waiting on dependencies: \(project.dependencyBlockedIssues.map(\.title).joined(separator: ", "))" : "依存関係待ち: \(project.dependencyBlockedIssues.map(\.title).joined(separator: "、"))")
             .font(.caption2).foregroundStyle(.orange).lineLimit(2)
         }
+        let runs = project.buildRuns.filter { $0.coordinatorIssueID != nil }
+        if !runs.isEmpty {
+          Divider()
+          Text(english ? "Coordinator review queue" : "コーディネーターのレビューキュー")
+            .font(.caption.bold())
+          ForEach(runs.prefix(5)) { run in
+            let issue = run.coordinatorIssueID.flatMap { id in project.issues.first { $0.id == id } }
+            let isRunning = run.status == "実行中" || run.status == "Running"
+            let needsReview = !isRunning && run.reviewedAt == nil && run.appliedAt == nil
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+              Image(systemName: isRunning ? "clock.arrow.circlepath" : needsReview ? "eye.circle.fill" : run.appliedAt == nil ? "checkmark.circle" : "checkmark.seal.fill")
+                .foregroundStyle(isRunning ? Color.orange : needsReview ? Color.blue : Color.green)
+              VStack(alignment: .leading, spacing: 1) {
+                Text(issue?.title ?? (english ? "Project task" : "プロジェクト課題")).font(.caption)
+                Text(english ? (needsReview ? "Review needed" : run.status) : (needsReview ? "確認待ち" : run.status))
+                  .font(.caption2).foregroundStyle(.secondary)
+              }
+              Spacer()
+              if !isRunning {
+                Button(needsReview ? (english ? "Review" : "確認") : (english ? "Open" : "開く"), systemImage: "doc.text.magnifyingglass") {
+                  selectedBuildRunID = run.id
+                  Task { await inspectSelectedBuild() }
+                }
+                .font(.caption)
+                .disabled(reviewingBuild)
+              }
+            }
+          }
+        }
       }.padding(.top, 3)
     }
   }
@@ -8384,7 +8448,8 @@ private struct VibeProjectEditor: View {
       let task = try JSONDecoder().decode(CodexTaskRecord.self, from: data)
       project.buildRuns.insert(VibeBuildRun(
         provider: buildProvider, sourceDirectory: sourceDirectory, workspaceDirectory: workspace,
-        taskID: task.id, status: "実行中", detail: "\(buildProvider.name)が隔離環境で実装しています。"), at: 0)
+        taskID: task.id, status: "実行中", detail: "\(buildProvider.name)が隔離環境で実装しています。",
+        coordinatorIssueID: coordinatorIssue?.id), at: 0)
       project.status = .active
       recordMemory(
         kind: "build",
@@ -8414,6 +8479,12 @@ private struct VibeProjectEditor: View {
         project.validationResults.insert(VibeValidationResult(
           outcome: outcome, detail: detail, source: task.request.provider.name, taskID: task.id), at: 0)
         project.validationResults = Array(project.validationResults.prefix(100))
+        saveProjectMemory()
+      }
+      if let task = review.task, task.status != .running,
+        let index = project.buildRuns.firstIndex(where: { $0.id == run.id })
+      {
+        project.buildRuns[index].reviewedAt = Date()
         saveProjectMemory()
       }
       buildReview = review
@@ -8477,7 +8548,8 @@ private struct VibeProjectEditor: View {
       project.buildRuns.insert(VibeBuildRun(
         provider: run.provider, sourceDirectory: run.sourceDirectory,
         workspaceDirectory: run.workspaceDirectory, taskID: task.id, status: english ? "Running" : "実行中",
-        detail: english ? "Retrying in the same isolated workspace." : "同じ隔離環境で再試行しています。"), at: 0)
+        detail: english ? "Retrying in the same isolated workspace." : "同じ隔離環境で再試行しています。",
+        coordinatorIssueID: run.coordinatorIssueID), at: 0)
       selectedBuildRunID = project.buildRuns.first?.id
       recordMemory(
         kind: "build",

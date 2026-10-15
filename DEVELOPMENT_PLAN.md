@@ -120,6 +120,7 @@ flowchart LR
 | 2.35 — Explicit Project Memory | 実装済み | プロジェクト固有の指示・前提・除外情報を明示保存し、AIビルドタスクへ安全に適用 |
 | 2.36 — Project-Scoped Chat Context | 実装済み | 会話ごとにプロジェクトを選択し、目標と明示メモリーを安全にチャットへ適用 |
 | 2.37 — Project Coordinator | 実装済み | 依存関係を満たした課題を順番に選び、隔離AIビルドへ安全に委任 |
+| 2.38 — Coordinator Task Runs & Review Queue | 実装済み | 委任した課題とAIビルドを関連付け、実行中・確認待ち・完了をレビューキューで追跡 |
 
 完了条件:
 
