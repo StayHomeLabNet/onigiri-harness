@@ -785,20 +785,24 @@ private struct VibeProjectIssue: Identifiable, Codable, Equatable {
   var kind: VibeProjectIssueKind = .task
   var priority: VibeProjectIssuePriority = .normal
   var dependencies: [UUID] = []
+  var owner: String = ""
+  var dueDate: Date?
   var resolvedAt: Date?
   var isResolved: Bool { resolvedAt != nil }
   func summary(english: Bool) -> String { "[\(kind.title(english: english)) · \(priority.title(english: english))] \(title)" }
 
-  init(id: UUID = UUID(), title: String, kind: VibeProjectIssueKind = .task, priority: VibeProjectIssuePriority = .normal, dependencies: [UUID] = [], resolvedAt: Date? = nil) {
+  init(id: UUID = UUID(), title: String, kind: VibeProjectIssueKind = .task, priority: VibeProjectIssuePriority = .normal, dependencies: [UUID] = [], owner: String = "", dueDate: Date? = nil, resolvedAt: Date? = nil) {
     self.id = id
     self.title = title
     self.kind = kind
     self.priority = priority
     self.dependencies = dependencies
+    self.owner = owner
+    self.dueDate = dueDate
     self.resolvedAt = resolvedAt
   }
 
-  private enum CodingKeys: String, CodingKey { case id, title, kind, priority, dependencies, resolvedAt }
+  private enum CodingKeys: String, CodingKey { case id, title, kind, priority, dependencies, owner, dueDate, resolvedAt }
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
@@ -807,6 +811,8 @@ private struct VibeProjectIssue: Identifiable, Codable, Equatable {
       kind: try values.decodeIfPresent(VibeProjectIssueKind.self, forKey: .kind) ?? .task,
       priority: try values.decodeIfPresent(VibeProjectIssuePriority.self, forKey: .priority) ?? .normal,
       dependencies: try values.decodeIfPresent([UUID].self, forKey: .dependencies) ?? [],
+      owner: try values.decodeIfPresent(String.self, forKey: .owner) ?? "",
+      dueDate: try values.decodeIfPresent(Date.self, forKey: .dueDate),
       resolvedAt: try values.decodeIfPresent(Date.self, forKey: .resolvedAt))
   }
 }
@@ -908,6 +914,20 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var readyIssues: [VibeProjectIssue] { activeIssues.filter { !hasUnresolvedDependencies(for: $0) } }
   var dependencyBlockedIssues: [VibeProjectIssue] { activeIssues.filter { hasUnresolvedDependencies(for: $0) } }
   var nextActionableIssue: VibeProjectIssue? { readyIssues.first }
+  var overdueIssues: [VibeProjectIssue] {
+    activeIssues.filter { issue in
+      guard let dueDate = issue.dueDate else { return false }
+      return dueDate < Calendar.current.startOfDay(for: Date())
+    }
+  }
+  var dueSoonIssues: [VibeProjectIssue] {
+    let today = Calendar.current.startOfDay(for: Date())
+    guard let limit = Calendar.current.date(byAdding: .day, value: 7, to: today) else { return [] }
+    return activeIssues.filter { issue in
+      guard let dueDate = issue.dueDate else { return false }
+      return dueDate >= today && dueDate <= limit
+    }
+  }
 
   static var blank: VibeProject {
     VibeProject(
@@ -6591,6 +6611,9 @@ private struct VibeProjectEditor: View {
   @State private var openItemDraft = ""
   @State private var issueKind: VibeProjectIssueKind = .task
   @State private var issuePriority: VibeProjectIssuePriority = .normal
+  @State private var issueOwner = ""
+  @State private var hasIssueDueDate = false
+  @State private var issueDueDate = Date()
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -6815,6 +6838,13 @@ private struct VibeProjectEditor: View {
         }
         if !project.dependencyBlockedIssues.isEmpty {
           Label(english ? "\(project.dependencyBlockedIssues.count) item(s) waiting on dependencies" : "依存関係待ち \(project.dependencyBlockedIssues.count) 件", systemImage: "arrow.triangle.branch")
+            .font(.caption).foregroundStyle(.orange)
+        }
+        if !project.overdueIssues.isEmpty {
+          Label(english ? "\(project.overdueIssues.count) overdue item(s)" : "期限超過 \(project.overdueIssues.count) 件", systemImage: "calendar.badge.exclamationmark")
+            .font(.caption).foregroundStyle(.red)
+        } else if !project.dueSoonIssues.isEmpty {
+          Label(english ? "\(project.dueSoonIssues.count) item(s) due within 7 days" : "7日以内の期限 \(project.dueSoonIssues.count) 件", systemImage: "calendar")
             .font(.caption).foregroundStyle(.orange)
         }
         Text((english ? "Next: " : "次にすること: ") + next).font(.caption).foregroundStyle(.secondary)
@@ -7093,6 +7123,16 @@ private struct VibeProjectEditor: View {
             Button(english ? "Add" : "追加", systemImage: "plus") { addIssueDraft() }
               .disabled(openItemDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
           }
+          HStack {
+            TextField(english ? "Owner (optional)" : "担当者（任意）", text: $issueOwner)
+              .textFieldStyle(.roundedBorder)
+            Toggle(english ? "Due date" : "期限", isOn: $hasIssueDueDate)
+              .toggleStyle(.checkbox)
+            if hasIssueDueDate {
+              DatePicker(english ? "Due" : "期限日", selection: $issueDueDate, displayedComponents: .date)
+                .labelsHidden()
+            }
+          }.font(.caption)
           if !project.activeIssues.isEmpty {
             ForEach(project.activeIssues) { issue in
               VStack(alignment: .leading, spacing: 4) {
@@ -7120,6 +7160,18 @@ private struct VibeProjectEditor: View {
                   let names = project.issues.filter { issue.dependencies.contains($0.id) && !$0.isResolved }.map(\.title).joined(separator: ", ")
                   Label(english ? "Waiting for: \(names)" : "依存関係待ち: \(names)", systemImage: "arrow.triangle.branch")
                     .font(.caption2).foregroundStyle(.orange)
+                }
+                if !issue.owner.isEmpty || issue.dueDate != nil {
+                  HStack(spacing: 8) {
+                    if !issue.owner.isEmpty {
+                      Label(issue.owner, systemImage: "person")
+                    }
+                    if let dueDate = issue.dueDate {
+                      let overdue = dueDate < Calendar.current.startOfDay(for: Date())
+                      Label(dueDate.formatted(date: .abbreviated, time: .omitted), systemImage: overdue ? "calendar.badge.exclamationmark" : "calendar")
+                        .foregroundStyle(overdue ? Color.red : .secondary)
+                    }
+                  }.font(.caption2).foregroundStyle(.secondary)
                 }
               }
             }
@@ -7478,10 +7530,15 @@ private struct VibeProjectEditor: View {
   private func addIssueDraft() {
     let title = openItemDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !title.isEmpty else { return }
-    let issue = VibeProjectIssue(title: title, kind: issueKind, priority: issuePriority)
+    let issue = VibeProjectIssue(
+      title: title, kind: issueKind, priority: issuePriority,
+      owner: issueOwner.trimmingCharacters(in: .whitespacesAndNewlines),
+      dueDate: hasIssueDueDate ? issueDueDate : nil)
     project.issues.append(issue)
     recordMemory(kind: "issue", detail: english ? "Added \(issue.summary(english: true))." : "\(issue.summary(english: false)) を追加しました。")
     openItemDraft = ""
+    issueOwner = ""
+    hasIssueDueDate = false
     saveProjectMemory()
   }
 
