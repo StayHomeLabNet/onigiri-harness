@@ -102,6 +102,7 @@ flowchart LR
 | 2.17 — Portfolio Insights | 実装済み | アーカイブ済みプロジェクトの完成数、確認結果、要対応事項を横断集計 |
 | 2.18 — Portfolio Search & Filters | 実装済み | アーカイブ済みプロジェクトをキーワードと確認状態で検索・絞り込み |
 | 2.19 — Portfolio Export & Review Report | 実装済み | アーカイブ済みプロジェクトをMarkdown/CSVで書き出し |
+| 2.20 — Project Restore & Reopen Flow | 実装済み | アーカイブしたプロジェクトを次の一手とともに作業中へ復元 |
 
 完了条件:
 

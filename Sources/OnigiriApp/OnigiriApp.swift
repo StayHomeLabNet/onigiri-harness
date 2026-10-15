@@ -6811,9 +6811,12 @@ private struct VibeProjectEditor: View {
           .disabled(!ready || project.status == .completed)
           if project.status == .completed {
             Button(project.archived ? (english ? "Restore" : "作業一覧へ戻す") : (english ? "Archive project" : "アーカイブする"), systemImage: project.archived ? "tray.and.arrow.up" : "archivebox") {
-              project.archived.toggle()
-              recordMemory(kind: "archive", detail: project.archived ? (english ? "Archived the completed project." : "完成したプロジェクトをアーカイブしました。") : (english ? "Restored the project to active work." : "プロジェクトを作業一覧へ戻しました。"))
-              saveProjectMemory()
+              if project.archived { reopenProject() }
+              else {
+                project.archived = true
+                recordMemory(kind: "archive", detail: english ? "Archived the completed project." : "完成したプロジェクトをアーカイブしました。")
+                saveProjectMemory()
+              }
             }
           }
         }
@@ -6825,6 +6828,16 @@ private struct VibeProjectEditor: View {
     Label(title, systemImage: complete ? "checkmark.circle.fill" : "circle")
       .font(.caption)
       .foregroundStyle(complete ? Color.green : .secondary)
+  }
+
+  private func reopenProject() {
+    project.archived = false
+    project.status = .active
+    if project.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      project.nextStep = project.openItems.first ?? (english ? "Review the validation results and choose the next improvement." : "確認結果を見直し、次の改善を決める。")
+    }
+    recordMemory(kind: "reopen", detail: english ? "Restored the project to active work. Next step: \(project.nextStep)" : "プロジェクトを作業一覧へ戻しました。次にすること: \(project.nextStep)")
+    saveProjectMemory()
   }
 
   private var handoffSection: some View {
