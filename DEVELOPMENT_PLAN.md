@@ -98,6 +98,7 @@ flowchart LR
 | 2.12 — Completion Readiness | 実装済み | 目標、計画、確認項目、確認結果を基に完成の準備状況を判断 |
 | 2.13 — Project Handoff & Shareable Summary | 実装済み | 目標、計画、ビルド履歴、確認結果、未解決事項をMarkdownとして書き出す |
 | 2.15 — Template Library & Custom Templates | 実装済み | 標準テンプレートと個人用テンプレートの保存・再利用・削除 |
+| 2.16 — Project Archive & Portfolio | 実装済み | 完成済みプロジェクトのアーカイブ、復元、一覧での振り返り |
 
 完了条件:
 

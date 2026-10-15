@@ -751,6 +751,7 @@ private enum VibeProjectStatus: String, Codable, CaseIterable, Identifiable {
 }
 
 private struct VibeProject: Identifiable, Codable, Equatable {
+  var archived: Bool = false
   var id: UUID
   var title: String
   var goal: String
@@ -771,13 +772,14 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var updatedAt: Date
 
   init(
-    id: UUID = UUID(), title: String, goal: String, audience: String,
+    id: UUID = UUID(), archived: Bool = false, title: String, goal: String, audience: String,
     essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], validationResults: [VibeValidationResult] = [], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
     buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [],
     memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
   ) {
     self.id = id
+    self.archived = archived
     self.title = title
     self.goal = goal
     self.audience = audience
@@ -798,14 +800,14 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
+    case id, archived, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
     case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
-      id: try values.decode(UUID.self, forKey: .id),
+      id: try values.decode(UUID.self, forKey: .id), archived: try values.decodeIfPresent(Bool.self, forKey: .archived) ?? false,
       title: try values.decode(String.self, forKey: .title),
       goal: try values.decode(String.self, forKey: .goal),
       audience: try values.decode(String.self, forKey: .audience),
@@ -6325,6 +6327,7 @@ private struct VibeProjectsView: View {
   @Environment(\.locale) private var locale
   @StateObject private var store = VibeProjectStore.shared
   @State private var selectedProjectID: UUID?
+  @State private var showsArchive = false
 
   private var english: Bool { locale.language.languageCode?.identifier == "en" }
   private var selectedProject: VibeProject? {
@@ -6365,20 +6368,23 @@ private struct VibeProjectsView: View {
       HStack {
         Text(english ? "Your projects" : "プロジェクト一覧").font(.headline)
         Spacer()
+        Button(showsArchive ? (english ? "Active" : "作業中") : (english ? "Archive" : "アーカイブ"), systemImage: showsArchive ? "tray.and.arrow.up" : "archivebox") { showsArchive.toggle() }
+          .labelStyle(.iconOnly)
         Button(english ? "New" : "新規", systemImage: "plus") {
           selectedProjectID = nil
         }
         .labelStyle(.iconOnly)
         .help(english ? "New project" : "新しいプロジェクト")
       }
-      if store.projects.isEmpty {
+      let visibleProjects = store.projects.filter { showsArchive ? $0.archived : !$0.archived }
+      if visibleProjects.isEmpty {
         ContentUnavailableView(
-          english ? "No projects yet" : "プロジェクトはありません",
-          systemImage: "target",
-          description: Text(english ? "Create a goal for something you want to make." : "作りたいものの目標を作成してください。"))
+          showsArchive ? (english ? "No archived projects" : "アーカイブはありません") : (english ? "No projects yet" : "プロジェクトはありません"),
+          systemImage: showsArchive ? "archivebox" : "target",
+          description: Text(english ? "Completed projects can be kept here for later reference." : "完成したプロジェクトを、後から振り返るために保管できます。"))
       } else {
         List(selection: $selectedProjectID) {
-          ForEach(store.projects) { project in
+          ForEach(visibleProjects) { project in
             VStack(alignment: .leading, spacing: 5) {
               Text(project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title)
                 .font(.headline)
@@ -6736,6 +6742,13 @@ private struct VibeProjectEditor: View {
           }
           .buttonStyle(.borderedProminent)
           .disabled(!ready || project.status == .completed)
+          if project.status == .completed {
+            Button(project.archived ? (english ? "Restore" : "作業一覧へ戻す") : (english ? "Archive project" : "アーカイブする"), systemImage: project.archived ? "tray.and.arrow.up" : "archivebox") {
+              project.archived.toggle()
+              recordMemory(kind: "archive", detail: project.archived ? (english ? "Archived the completed project." : "完成したプロジェクトをアーカイブしました。") : (english ? "Restored the project to active work." : "プロジェクトを作業一覧へ戻しました。"))
+              saveProjectMemory()
+            }
+          }
         }
       }.padding(.top, 4)
     }
