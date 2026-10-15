@@ -116,6 +116,7 @@ flowchart LR
 | 2.31 — Project Status Report History | 実装済み | 書き出した状況レポートの要点を保存し、前回との差分を未解決事項・ブロッカー・期限超過で比較 |
 | 2.32 — Project Report Scheduling | 実装済み | 日次・週次の自動作成を設定し、プロジェクト画面を開いた際にMarkdownレポートを保存 |
 | 2.33 — Project Report Destinations & Sharing | 実装済み | 保存先を選択しFinderで開き、MarkdownまたはCSV形式で状況レポートを共有可能 |
+| 2.34 — Project Report Templates | 実装済み | 日次確認・週次レビュー・共有用サマリーから用途別にレポート内容を選択 |
 
 完了条件:
 

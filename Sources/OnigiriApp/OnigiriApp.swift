@@ -1376,11 +1376,24 @@ private enum VibeStatusReportFormat: String, CaseIterable, Identifiable {
   var fileExtension: String { self == .markdown ? "md" : "csv" }
 }
 
+private enum VibeStatusReportTemplate: String, CaseIterable, Identifiable {
+  case dailyFocus, weeklyReview, shareSummary
+  var id: String { rawValue }
+  func title(english: Bool) -> String {
+    switch self {
+    case .dailyFocus: return english ? "Daily focus" : "日次確認"
+    case .weeklyReview: return english ? "Weekly review" : "週次レビュー"
+    case .shareSummary: return english ? "Share summary" : "共有用サマリー"
+    }
+  }
+}
+
 @MainActor private final class VibeStatusReportStore: ObservableObject {
   static let shared = VibeStatusReportStore()
   @Published private(set) var snapshots: [VibeStatusReportSnapshot] = []
   @Published var schedule: VibeStatusReportSchedule = .off { didSet { UserDefaults.standard.set(schedule.rawValue, forKey: scheduleKey) } }
   @Published var format: VibeStatusReportFormat = .markdown { didSet { UserDefaults.standard.set(format.rawValue, forKey: formatKey) } }
+  @Published var template: VibeStatusReportTemplate = .weeklyReview { didSet { UserDefaults.standard.set(template.rawValue, forKey: templateKey) } }
   @Published private(set) var destinationPath: String?
   @Published private(set) var lastScheduledAt: Date?
   private let defaultsKey = "onigiri.vibeStatusReportHistory.v1"
@@ -1388,12 +1401,14 @@ private enum VibeStatusReportFormat: String, CaseIterable, Identifiable {
   private let lastScheduledKey = "onigiri.vibeStatusReportLastScheduled.v1"
   private let formatKey = "onigiri.vibeStatusReportFormat.v1"
   private let destinationKey = "onigiri.vibeStatusReportDestination.v1"
+  private let templateKey = "onigiri.vibeStatusReportTemplate.v1"
 
   private init() {
     guard let data = UserDefaults.standard.data(forKey: defaultsKey),
           let saved = try? JSONDecoder().decode([VibeStatusReportSnapshot].self, from: data) else {
       schedule = VibeStatusReportSchedule(rawValue: UserDefaults.standard.string(forKey: scheduleKey) ?? "") ?? .off
       format = VibeStatusReportFormat(rawValue: UserDefaults.standard.string(forKey: formatKey) ?? "") ?? .markdown
+      template = VibeStatusReportTemplate(rawValue: UserDefaults.standard.string(forKey: templateKey) ?? "") ?? .weeklyReview
       destinationPath = UserDefaults.standard.string(forKey: destinationKey)
       lastScheduledAt = UserDefaults.standard.object(forKey: lastScheduledKey) as? Date
       return
@@ -1401,6 +1416,7 @@ private enum VibeStatusReportFormat: String, CaseIterable, Identifiable {
     snapshots = saved.sorted { $0.createdAt > $1.createdAt }
     schedule = VibeStatusReportSchedule(rawValue: UserDefaults.standard.string(forKey: scheduleKey) ?? "") ?? .off
     format = VibeStatusReportFormat(rawValue: UserDefaults.standard.string(forKey: formatKey) ?? "") ?? .markdown
+    template = VibeStatusReportTemplate(rawValue: UserDefaults.standard.string(forKey: templateKey) ?? "") ?? .weeklyReview
     destinationPath = UserDefaults.standard.string(forKey: destinationKey)
     lastScheduledAt = UserDefaults.standard.object(forKey: lastScheduledKey) as? Date
   }
@@ -6712,6 +6728,11 @@ private struct VibeProjectsView: View {
     let reports = reportStore.snapshots
     return GroupBox(english ? "Status report history" : "状況レポート履歴") {
       VStack(alignment: .leading, spacing: 4) {
+        Picker(english ? "Template" : "テンプレート", selection: $reportStore.template) {
+          ForEach(VibeStatusReportTemplate.allCases) { template in
+            Text(template.title(english: english)).tag(template)
+          }
+        }.pickerStyle(.menu).font(.caption)
         Picker(english ? "Format" : "形式", selection: $reportStore.format) {
           ForEach(VibeStatusReportFormat.allCases) { format in
             Text(format.title(english: english)).tag(format)
@@ -6806,6 +6827,22 @@ private struct VibeProjectsView: View {
 
   private func statusReportCSV(projects: [VibeProject]) -> String {
     func escape(_ value: String) -> String { "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\"" }
+    if reportStore.template == .dailyFocus {
+      let rows = projects.flatMap { project in
+        project.readyIssues.map { issue in
+          [project.title, issue.title, issue.kind.title(english: english), issue.priority.title(english: english), issue.dueDate?.formatted(date: .abbreviated, time: .omitted) ?? ""]
+            .map(escape).joined(separator: ",")
+        }
+      }
+      return (["project,priorityItem,type,priority,dueDate"] + rows).joined(separator: "\n") + "\n"
+    }
+    if reportStore.template == .shareSummary {
+      let rows = projects.map { project in
+        let next = project.nextActionableIssue?.title ?? project.nextStep
+        return [project.title, project.status.title(english: english), project.goal, next].map(escape).joined(separator: ",")
+      }
+      return (["title,status,goal,next"] + rows).joined(separator: "\n") + "\n"
+    }
     let header = "title,status,goal,next,openItems,blockers,overdue"
     let rows = projects.map { project in
       let title = project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title
@@ -6818,6 +6855,39 @@ private struct VibeProjectsView: View {
   }
 
   private func statusReportMarkdown(projects: [VibeProject]) -> String {
+    switch reportStore.template {
+    case .dailyFocus: return dailyFocusReportMarkdown(projects: projects)
+    case .weeklyReview: return weeklyReviewReportMarkdown(projects: projects)
+    case .shareSummary: return shareSummaryReportMarkdown(projects: projects)
+    }
+  }
+
+  private func dailyFocusReportMarkdown(projects: [VibeProject]) -> String {
+    let items = projects.flatMap { project in
+      project.readyIssues.map { issue in (project, issue) }
+    }.sorted { lhs, rhs in
+      if lhs.1.kind == .blocker && rhs.1.kind != .blocker { return true }
+      if rhs.1.kind == .blocker && lhs.1.kind != .blocker { return false }
+      return lhs.1.priority.rank > rhs.1.priority.rank
+    }
+    let rows = items.prefix(10).map { project, issue in
+      let title = project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title
+      let due = issue.dueDate.map { " · \($0.formatted(date: .abbreviated, time: .omitted))" } ?? ""
+      return "- **\(title)** — \(issue.title)\(due)"
+    }.joined(separator: "\n")
+    return "# \(english ? "Onigiri Daily Focus" : "Onigiri 日次確認")\n\n\(english ? "Generated" : "作成日時"): \(Date.now.formatted(date: .long, time: .shortened))\n\n## \(english ? "Priority items" : "優先事項")\n\(rows.isEmpty ? (english ? "- No actionable items." : "- 着手可能な課題はありません。") : rows)\n"
+  }
+
+  private func shareSummaryReportMarkdown(projects: [VibeProject]) -> String {
+    let details = projects.map { project in
+      let title = project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title
+      let next = project.nextActionableIssue?.title ?? project.nextStep
+      return "## \(title)\n\n\(project.goal)\n\n- \(english ? "Status" : "状態"): \(project.status.title(english: english))\n- \(english ? "Next" : "次にすること"): \(next.isEmpty ? (english ? "Not set" : "未設定") : next)"
+    }.joined(separator: "\n\n")
+    return "# \(english ? "Onigiri Project Summary" : "Onigiri プロジェクト共有サマリー")\n\n\(english ? "Generated" : "作成日時"): \(Date.now.formatted(date: .long, time: .shortened))\n\n\(details)\n"
+  }
+
+  private func weeklyReviewReportMarkdown(projects: [VibeProject]) -> String {
     let date = Date.now.formatted(date: .long, time: .shortened)
     let overdue = projects.flatMap(\.overdueIssues).count
     let blockers = projects.flatMap { $0.activeIssues.filter { $0.kind == .blocker } }.count
