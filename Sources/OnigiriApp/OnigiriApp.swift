@@ -6448,6 +6448,11 @@ private struct VibeProjectsView: View {
   @State private var portfolioQuery = ""
   @State private var portfolioFilter = "all"
   @State private var portfolioExportMessage: String?
+  @State private var reviewItem: VibeProjectFocusItem?
+  @State private var reviewOwner = ""
+  @State private var reviewHasDueDate = false
+  @State private var reviewDueDate = Date()
+  @State private var reviewNextStep = ""
 
   private var english: Bool { locale.language.languageCode?.identifier == "en" }
   private var selectedProject: VibeProject? {
@@ -6481,6 +6486,33 @@ private struct VibeProjectsView: View {
       }
     }
     .padding(20)
+    .sheet(item: $reviewItem) { item in
+      VStack(alignment: .leading, spacing: 14) {
+        Text(english ? "Review action" : "レビュー操作").font(.title3.bold())
+        Text(item.issue.title).font(.headline)
+        Text(item.projectTitle).font(.caption).foregroundStyle(.secondary)
+        TextField(english ? "Owner" : "担当者", text: $reviewOwner)
+        Toggle(english ? "Set due date" : "期限を設定", isOn: $reviewHasDueDate)
+        if reviewHasDueDate {
+          DatePicker(english ? "Due date" : "期限日", selection: $reviewDueDate, displayedComponents: .date)
+        }
+        TextField(english ? "Next step for this project" : "このプロジェクトの次にすること", text: $reviewNextStep)
+        HStack {
+          Button(english ? "Resolve issue" : "課題を解決", systemImage: "checkmark") {
+            resolveFocusIssue(item)
+            reviewItem = nil
+          }
+          Spacer()
+          Button(english ? "Cancel" : "キャンセル") { reviewItem = nil }
+          Button(english ? "Save review" : "レビューを保存") {
+            saveReview(for: item)
+            reviewItem = nil
+          }.buttonStyle(.borderedProminent)
+        }
+      }
+      .padding(20)
+      .frame(width: 420)
+    }
   }
 
   private var projectList: some View {
@@ -6589,10 +6621,11 @@ private struct VibeProjectsView: View {
               .font(.caption).foregroundStyle(overdue > 0 ? .red : .orange)
           }
           ForEach(items.prefix(4)) { item in
-            Button {
-              selectedProjectID = item.projectID
-            } label: {
-              HStack(spacing: 5) {
+            HStack(spacing: 5) {
+              Button {
+                selectedProjectID = item.projectID
+              } label: {
+                HStack(spacing: 5) {
                 Image(systemName: item.overdue ? "calendar.badge.exclamationmark" : item.issue.kind.symbol)
                   .foregroundStyle(item.overdue || item.issue.kind == .blocker ? Color.red : item.issue.kind == .risk ? Color.orange : .secondary)
                 VStack(alignment: .leading, spacing: 1) {
@@ -6603,11 +6636,18 @@ private struct VibeProjectsView: View {
                 if let dueDate = item.issue.dueDate {
                   Text(dueDate.formatted(date: .abbreviated, time: .omitted)).font(.caption2)
                 }
+                }
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
               }
-              .font(.caption)
-              .frame(maxWidth: .infinity, alignment: .leading)
+              .buttonStyle(.plain)
+              .contextMenu {
+                Button(english ? "Resolve issue" : "課題を解決") { resolveFocusIssue(item) }
+              }
+              Button(english ? "Review actions" : "レビュー操作", systemImage: "slider.horizontal.3") { openReview(for: item) }
+                .labelStyle(.iconOnly)
+                .help(english ? "Review actions" : "レビュー操作")
             }
-            .buttonStyle(.plain)
           }
         }
       }.padding(.top, 3)
@@ -6624,6 +6664,32 @@ private struct VibeProjectsView: View {
           entry: entry)
       }
     }.sorted { $0.entry.createdAt > $1.entry.createdAt }
+  }
+
+  private func openReview(for item: VibeProjectFocusItem) {
+    reviewOwner = item.issue.owner
+    reviewHasDueDate = item.issue.dueDate != nil
+    reviewDueDate = item.issue.dueDate ?? Date()
+    reviewNextStep = store.projects.first(where: { $0.id == item.projectID })?.nextStep ?? ""
+    reviewItem = item
+  }
+
+  private func resolveFocusIssue(_ item: VibeProjectFocusItem) {
+    guard var project = store.projects.first(where: { $0.id == item.projectID }),
+          let index = project.issues.firstIndex(where: { $0.id == item.issue.id }) else { return }
+    project.issues[index].resolvedAt = Date()
+    project.memory.insert(VibeProjectMemoryEntry(kind: "issue", detail: english ? "Resolved \(item.issue.summary(english: true)) from the review." : "レビューから \(item.issue.summary(english: false)) を解決しました。"), at: 0)
+    store.save(project)
+  }
+
+  private func saveReview(for item: VibeProjectFocusItem) {
+    guard var project = store.projects.first(where: { $0.id == item.projectID }),
+          let index = project.issues.firstIndex(where: { $0.id == item.issue.id }) else { return }
+    project.issues[index].owner = reviewOwner.trimmingCharacters(in: .whitespacesAndNewlines)
+    project.issues[index].dueDate = reviewHasDueDate ? reviewDueDate : nil
+    project.nextStep = reviewNextStep.trimmingCharacters(in: .whitespacesAndNewlines)
+    project.memory.insert(VibeProjectMemoryEntry(kind: "review", detail: english ? "Updated owner, due date, or next step from the weekly review." : "週次レビューから担当者・期限・次にすることを更新しました。"), at: 0)
+    store.save(project)
   }
 
   private var weeklyActivitySection: some View {
@@ -6669,6 +6735,7 @@ private struct VibeProjectsView: View {
     case "archive": return "archivebox"
     case "reopen": return "arrow.uturn.backward"
     case "milestone": return "pin"
+    case "review": return "slider.horizontal.3"
     default: return "clock"
     }
   }
