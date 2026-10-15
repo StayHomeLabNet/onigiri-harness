@@ -6328,6 +6328,8 @@ private struct VibeProjectsView: View {
   @StateObject private var store = VibeProjectStore.shared
   @State private var selectedProjectID: UUID?
   @State private var showsArchive = false
+  @State private var portfolioQuery = ""
+  @State private var portfolioFilter = "all"
 
   private var english: Bool { locale.language.languageCode?.identifier == "en" }
   private var selectedProject: VibeProject? {
@@ -6376,7 +6378,28 @@ private struct VibeProjectsView: View {
         .labelStyle(.iconOnly)
         .help(english ? "New project" : "新しいプロジェクト")
       }
-      let visibleProjects = store.projects.filter { showsArchive ? $0.archived : !$0.archived }
+      if showsArchive {
+        HStack {
+          TextField(english ? "Search projects" : "プロジェクトを検索", text: $portfolioQuery)
+            .textFieldStyle(.roundedBorder)
+          Picker(english ? "Filter" : "絞り込み", selection: $portfolioFilter) {
+            Text(english ? "All" : "すべて").tag("all")
+            Text(english ? "Passed" : "確認済みあり").tag("passed")
+            Text(english ? "Needs attention" : "要確認あり").tag("attention")
+          }.pickerStyle(.menu)
+        }
+      }
+      let visibleProjects = store.projects.filter { project in
+        guard showsArchive ? project.archived : !project.archived else { return false }
+        guard showsArchive else { return true }
+        let query = portfolioQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let searchable = ([project.title, project.goal] + project.openItems).joined(separator: " ").lowercased()
+        let matchesQuery = query.isEmpty || searchable.contains(query)
+        let matchesFilter = portfolioFilter == "all"
+          || (portfolioFilter == "passed" && project.validationResults.contains { $0.outcome == .passed })
+          || (portfolioFilter == "attention" && project.validationResults.contains { $0.outcome != .passed })
+        return matchesQuery && matchesFilter
+      }
       if visibleProjects.isEmpty {
         ContentUnavailableView(
           showsArchive ? (english ? "No archived projects" : "アーカイブはありません") : (english ? "No projects yet" : "プロジェクトはありません"),

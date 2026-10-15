@@ -100,6 +100,7 @@ flowchart LR
 | 2.15 — Template Library & Custom Templates | 実装済み | 標準テンプレートと個人用テンプレートの保存・再利用・削除 |
 | 2.16 — Project Archive & Portfolio | 実装済み | 完成済みプロジェクトのアーカイブ、復元、一覧での振り返り |
 | 2.17 — Portfolio Insights | 実装済み | アーカイブ済みプロジェクトの完成数、確認結果、要対応事項を横断集計 |
+| 2.18 — Portfolio Search & Filters | 実装済み | アーカイブ済みプロジェクトをキーワードと確認状態で検索・絞り込み |
 
 完了条件:
 
