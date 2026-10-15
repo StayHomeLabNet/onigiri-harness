@@ -6432,6 +6432,13 @@ private struct VibeProjectFocusItem: Identifiable {
   var id: UUID { issue.id }
 }
 
+private struct VibeProjectActivityItem: Identifiable {
+  let projectID: UUID
+  let projectTitle: String
+  let entry: VibeProjectMemoryEntry
+  var id: UUID { entry.id }
+}
+
 private struct VibeProjectsView: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(\.locale) private var locale
@@ -6501,6 +6508,7 @@ private struct VibeProjectsView: View {
         }
       } else {
         dailyFocusSection
+        weeklyActivitySection
       }
       let visibleProjects = store.projects.filter { project in
         guard showsArchive ? project.archived : !project.archived else { return false }
@@ -6603,6 +6611,65 @@ private struct VibeProjectsView: View {
           }
         }
       }.padding(.top, 3)
+    }
+  }
+
+  private var weeklyActivityItems: [VibeProjectActivityItem] {
+    let cutoff = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? .distantPast
+    return store.projects.filter { !$0.archived }.flatMap { project in
+      project.memory.filter { $0.createdAt >= cutoff }.map { entry in
+        VibeProjectActivityItem(
+          projectID: project.id,
+          projectTitle: project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title,
+          entry: entry)
+      }
+    }.sorted { $0.entry.createdAt > $1.entry.createdAt }
+  }
+
+  private var weeklyActivitySection: some View {
+    let items = weeklyActivityItems
+    let activeProjectCount = Set(items.map(\.projectID)).count
+    return GroupBox(english ? "Weekly review" : "週次レビュー") {
+      VStack(alignment: .leading, spacing: 5) {
+        if items.isEmpty {
+          Text(english ? "No recorded project activity in the last 7 days." : "過去7日間に記録されたプロジェクト活動はありません。")
+            .font(.caption).foregroundStyle(.secondary)
+        } else {
+          Text(english ? "\(items.count) updates across \(activeProjectCount) project(s) in the last 7 days" : "過去7日間の更新 \(items.count) 件・\(activeProjectCount) プロジェクト")
+            .font(.caption2).foregroundStyle(.secondary)
+          ForEach(items.prefix(5)) { item in
+            Button {
+              selectedProjectID = item.projectID
+            } label: {
+              HStack(alignment: .top, spacing: 5) {
+                Image(systemName: activitySymbol(for: item.entry.kind)).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                  Text(item.entry.detail).lineLimit(2)
+                  Text("\(item.projectTitle) · \(item.entry.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+              }
+              .font(.caption)
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+          }
+        }
+      }.padding(.top, 3)
+    }
+  }
+
+  private func activitySymbol(for kind: String) -> String {
+    switch kind {
+    case "decision": return "checkmark.circle"
+    case "issue": return "exclamationmark.bubble"
+    case "dependency": return "arrow.triangle.branch"
+    case "build": return "hammer"
+    case "completion": return "checkmark.seal"
+    case "archive": return "archivebox"
+    case "reopen": return "arrow.uturn.backward"
+    case "milestone": return "pin"
+    default: return "clock"
     }
   }
 
