@@ -817,6 +817,21 @@ private struct VibeProjectIssue: Identifiable, Codable, Equatable {
   }
 }
 
+private struct VibeExplicitProjectMemory: Codable, Equatable {
+  var instructions = ""
+  var assumptions = ""
+  var excludedInformation = ""
+  var applyToBuild = true
+  var applyToChat = false
+  var applyToRAG = false
+
+  var isEmpty: Bool {
+    instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && assumptions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && excludedInformation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+}
+
 private struct VibeProject: Identifiable, Codable, Equatable {
   var archived: Bool = false
   var id: UUID
@@ -835,6 +850,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var decisions: [String]
   var openItems: [String]
   var issues: [VibeProjectIssue]
+  var explicitMemory: VibeExplicitProjectMemory
   var memory: [VibeProjectMemoryEntry]
   var createdAt: Date
   var updatedAt: Date
@@ -843,7 +859,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     id: UUID = UUID(), archived: Bool = false, title: String, goal: String, audience: String,
     essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], validationResults: [VibeValidationResult] = [], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
-    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [],
+    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(),
     memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
   ) {
     self.id = id
@@ -863,6 +879,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     self.decisions = decisions
     self.openItems = openItems
     self.issues = issues
+    self.explicitMemory = explicitMemory
     self.memory = memory
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -870,7 +887,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, archived, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
-    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, memory, createdAt, updatedAt
+    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
@@ -893,6 +910,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
       openItems: [],
       issues: try values.decodeIfPresent([VibeProjectIssue].self, forKey: .issues)
         ?? (try values.decodeIfPresent([String].self, forKey: .openItems) ?? []).map { VibeProjectIssue(title: $0) },
+      explicitMemory: try values.decodeIfPresent(VibeExplicitProjectMemory.self, forKey: .explicitMemory) ?? VibeExplicitProjectMemory(),
       memory: try values.decodeIfPresent([VibeProjectMemoryEntry].self, forKey: .memory) ?? [],
       createdAt: try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
       updatedAt: try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date())
@@ -7184,6 +7202,7 @@ private struct VibeProjectEditor: View {
 
         buildGuideSection
         projectHealthSection
+        explicitMemorySection
 
         GroupBox(english ? "Start with a template" : "テンプレートから始める") {
           VStack(alignment: .leading, spacing: 9) {
@@ -7382,6 +7401,37 @@ private struct VibeProjectEditor: View {
             .font(.caption).foregroundStyle(.orange)
         }
         Text((english ? "Next: " : "次にすること: ") + next).font(.caption).foregroundStyle(.secondary)
+      }.padding(.top, 3)
+    }
+  }
+
+  private var explicitMemorySection: some View {
+    GroupBox(english ? "Explicit project memory" : "明示的なプロジェクトメモリー") {
+      VStack(alignment: .leading, spacing: 9) {
+        Text(english
+          ? "Write only information you intentionally want an AI to use. It is stored with this project."
+          : "AIに意図して使わせたい情報だけを記入します。内容はこのプロジェクトと一緒に保存されます。")
+          .font(.caption).foregroundStyle(.secondary)
+        labeledEditor(
+          english ? "Always-follow instructions" : "常に守る指示",
+          english ? "For example: Keep all data local and explain trade-offs before adding a dependency." : "例: データはローカルだけに保存し、依存関係を追加する前に選択理由を説明する。",
+          text: $project.explicitMemory.instructions, minHeight: 64)
+        labeledEditor(
+          english ? "Known assumptions" : "覚えておく前提",
+          english ? "For example: The app is for one person on macOS." : "例: macOS上で一人が使うアプリ。",
+          text: $project.explicitMemory.assumptions, minHeight: 56)
+        labeledEditor(
+          english ? "Do not include or use" : "渡さない・使わない情報",
+          english ? "For example: Never send personal notes or API keys to an external provider." : "例: 個人メモやAPIキーを外部プロバイダに送らない。",
+          text: $project.explicitMemory.excludedInformation, minHeight: 56)
+        Divider()
+        Toggle(english ? "Apply to AI build tasks" : "AIビルドタスクに適用", isOn: $project.explicitMemory.applyToBuild)
+        Toggle(english ? "Apply when this project is selected in chat" : "このプロジェクトをチャットで選択したときに適用", isOn: $project.explicitMemory.applyToChat)
+        Toggle(english ? "Apply to RAG requests for this project" : "このプロジェクトのRAGリクエストに適用", isOn: $project.explicitMemory.applyToRAG)
+        Text(english
+          ? "Build tasks use this memory now. Chat and RAG scopes are saved for a later project-selection connection."
+          : "AIビルドタスクには今すぐ適用されます。チャットとRAGの範囲は、次のプロジェクト選択連携に備えて保存されます。")
+          .font(.caption2).foregroundStyle(.secondary)
       }.padding(.top, 3)
     }
   }
@@ -8374,6 +8424,7 @@ private struct VibeProjectEditor: View {
     let validation = project.validationSteps.isEmpty
       ? (english ? "- Run the most relevant available check." : "- 利用できる最も関連の深い確認を実行する。")
       : project.validationSteps.map { "- \($0)" }.joined(separator: "\n")
+    let explicitMemory = explicitMemoryForBuildPrompt()
     return """
     Work only inside the assigned workspace: \(workspace)
 
@@ -8390,7 +8441,23 @@ private struct VibeProjectEditor: View {
 
     Validation profile:
     \(validation)
+    \(explicitMemory)
     """
+  }
+
+  private func explicitMemoryForBuildPrompt() -> String {
+    let memory = project.explicitMemory
+    guard memory.applyToBuild, !memory.isEmpty else { return "" }
+    var sections: [String] = []
+    let instructions = memory.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !instructions.isEmpty { sections.append("Always-follow instructions:\n\(instructions)") }
+    let assumptions = memory.assumptions.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !assumptions.isEmpty { sections.append("Known assumptions:\n\(assumptions)") }
+    if !memory.excludedInformation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      sections.append("Do not request, use, or expose information marked as excluded in the project memory. The excluded details themselves are intentionally not included in this task prompt.")
+    }
+    guard !sections.isEmpty else { return "" }
+    return "\nExplicit project memory:\n\(sections.joined(separator: "\n\n"))"
   }
 }
 
