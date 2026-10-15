@@ -112,6 +112,7 @@ flowchart LR
 | 2.27 — Project Notifications & Daily Focus | 実装済み | 作業中プロジェクトを横断し、期限超過・ブロッカー・直近の課題を今日の優先事項として表示 |
 | 2.28 — Project Activity Feed & Weekly Review | 実装済み | 判断・課題・ビルド・確認の履歴を横断集約し、過去7日間の活動を週次レビューとして表示 |
 | 2.29 — Project Review Actions | 実装済み | 優先課題から担当者・期限・次の一手を更新し、課題をレビュー画面から解決可能 |
+| 2.30 — Project Status Reports | 実装済み | 進捗、ブロッカー、期限、次の一手を全プロジェクト横断のMarkdownレポートとして書き出し |
 
 完了条件:
 

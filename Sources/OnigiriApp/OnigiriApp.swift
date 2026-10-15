@@ -6453,6 +6453,7 @@ private struct VibeProjectsView: View {
   @State private var reviewHasDueDate = false
   @State private var reviewDueDate = Date()
   @State private var reviewNextStep = ""
+  @State private var statusReportMessage: String?
 
   private var english: Bool { locale.language.languageCode?.identifier == "en" }
   private var selectedProject: VibeProject? {
@@ -6463,6 +6464,15 @@ private struct VibeProjectsView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       SheetTitleBar(title: english ? "Projects" : "プロジェクト")
+      HStack {
+        Spacer()
+        Button(english ? "Export status report" : "状況レポートを書き出す", systemImage: "doc.richtext") {
+          exportStatusReport()
+        }
+        if let statusReportMessage {
+          Text(statusReportMessage).font(.caption).foregroundStyle(.secondary)
+        }
+      }
       Text(english
         ? "Turn an idea into a clear goal before asking an AI to build it."
         : "作りたいものを、AIに実装を頼む前に分かりやすい目標へ整理します。")
@@ -6580,6 +6590,42 @@ private struct VibeProjectsView: View {
       if showsArchive { portfolioInsights }
     }
     .padding(.trailing, 14)
+  }
+
+  private func exportStatusReport() {
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+    panel.nameFieldStringValue = "Onigiri-Project-Status-\(Date.now.formatted(.iso8601.year().month().day())).md"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    let active = store.projects.filter { !$0.archived }
+    let markdown = statusReportMarkdown(projects: active)
+    do {
+      try markdown.write(to: url, atomically: true, encoding: .utf8)
+      statusReportMessage = english ? "Saved: \(url.lastPathComponent)" : "保存しました: \(url.lastPathComponent)"
+    } catch {
+      statusReportMessage = error.localizedDescription
+    }
+  }
+
+  private func statusReportMarkdown(projects: [VibeProject]) -> String {
+    let date = Date.now.formatted(date: .long, time: .shortened)
+    let overdue = projects.flatMap(\.overdueIssues).count
+    let blockers = projects.flatMap { $0.activeIssues.filter { $0.kind == .blocker } }.count
+    let heading = english ? "# Onigiri Project Status Report" : "# Onigiri プロジェクト状況レポート"
+    let overview = english
+      ? "Generated: \(date)\n\n- Active projects: \(projects.count)\n- Overdue items: \(overdue)\n- Blockers: \(blockers)"
+      : "作成日時: \(date)\n\n- 作業中プロジェクト: \(projects.count) 件\n- 期限超過: \(overdue) 件\n- ブロッカー: \(blockers) 件"
+    let details = projects.map { project in
+      let title = project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title
+      let blockers = project.activeIssues.filter { $0.kind == .blocker }.map(\.title)
+      let overdue = project.overdueIssues.map(\.title)
+      let next = project.nextActionableIssue?.title ?? project.nextStep
+      let list = { (label: String, values: [String]) in
+        values.isEmpty ? "- \(label): \(english ? "None" : "なし")" : "- \(label): " + values.joined(separator: ", ")
+      }
+      return "## \(title)\n\n- \(english ? "Status" : "状態"): \(project.status.title(english: english))\n- \(english ? "Goal" : "目標"): \(project.goal.isEmpty ? (english ? "Not set" : "未設定") : project.goal)\n- \(english ? "Next" : "次にすること"): \(next.isEmpty ? (english ? "Not set" : "未設定") : next)\n\(list(english ? "Blockers" : "ブロッカー", blockers))\n\(list(english ? "Overdue" : "期限超過", overdue))\n- \(english ? "Open items" : "未解決事項"): \(project.activeIssues.count)"
+    }.joined(separator: "\n\n")
+    return "\(heading)\n\n\(overview)\n\n\(details)\n"
   }
 
   private var dailyFocusItems: [VibeProjectFocusItem] {
