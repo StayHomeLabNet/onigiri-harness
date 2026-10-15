@@ -6401,8 +6401,27 @@ private struct VibeProjectsView: View {
           }
         }
       }
+      if showsArchive { portfolioInsights }
     }
     .padding(.trailing, 14)
+  }
+
+  private var portfolioInsights: some View {
+    let archived = store.projects.filter(\.archived)
+    let passed = archived.flatMap(\.validationResults).filter { $0.outcome == .passed }.count
+    let attention = archived.flatMap(\.validationResults).filter { $0.outcome != .passed }.count
+    let openItems = archived.reduce(0) { $0 + $1.openItems.count }
+    return VStack(alignment: .leading, spacing: 5) {
+      Text(english ? "Portfolio insights" : "ポートフォリオの振り返り").font(.caption.bold())
+      Label(english ? "\(archived.count) archived projects" : "アーカイブ済み \(archived.count) 件", systemImage: "archivebox")
+      Label(english ? "\(passed) checks passed" : "確認済み \(passed) 件", systemImage: "checkmark.circle")
+      if attention > 0 { Label(english ? "\(attention) checks need attention" : "要確認 \(attention) 件", systemImage: "exclamationmark.circle").foregroundStyle(.orange) }
+      if openItems > 0 { Label(english ? "\(openItems) open items" : "未解決事項 \(openItems) 件", systemImage: "questionmark.circle").foregroundStyle(.secondary) }
+    }
+    .font(.caption)
+    .padding(10)
+    .background(Color.secondary.opacity(0.08))
+    .clipShape(RoundedRectangle(cornerRadius: 8))
   }
 }
 

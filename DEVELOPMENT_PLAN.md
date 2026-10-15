@@ -99,6 +99,7 @@ flowchart LR
 | 2.13 — Project Handoff & Shareable Summary | 実装済み | 目標、計画、ビルド履歴、確認結果、未解決事項をMarkdownとして書き出す |
 | 2.15 — Template Library & Custom Templates | 実装済み | 標準テンプレートと個人用テンプレートの保存・再利用・削除 |
 | 2.16 — Project Archive & Portfolio | 実装済み | 完成済みプロジェクトのアーカイブ、復元、一覧での振り返り |
+| 2.17 — Portfolio Insights | 実装済み | アーカイブ済みプロジェクトの完成数、確認結果、要対応事項を横断集計 |
 
 完了条件:
 
