@@ -109,6 +109,7 @@ flowchart LR
 | 2.24 — Project Risk & Blocker Management | 実装済み | タスク・リスク・ブロッカーを優先度と解決状態つきで管理し、次の作業へ反映 |
 | 2.25 — Project Dependencies & Sequencing | 実装済み | 課題間の依存関係を設定し、着手可能な順序と依存関係待ちを可視化 |
 | 2.26 — Project Ownership & Due Dates | 実装済み | 課題の担当者と期限を管理し、期限超過と直近の対応事項を状態表示 |
+| 2.27 — Project Notifications & Daily Focus | 実装済み | 作業中プロジェクトを横断し、期限超過・ブロッカー・直近の課題を今日の優先事項として表示 |
 
 完了条件:
 

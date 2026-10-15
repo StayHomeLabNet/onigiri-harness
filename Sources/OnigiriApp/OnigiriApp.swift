@@ -6424,6 +6424,14 @@ private struct DataManagementView: View {
   }
 }
 
+private struct VibeProjectFocusItem: Identifiable {
+  let projectID: UUID
+  let projectTitle: String
+  let issue: VibeProjectIssue
+  let overdue: Bool
+  var id: UUID { issue.id }
+}
+
 private struct VibeProjectsView: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(\.locale) private var locale
@@ -6491,6 +6499,8 @@ private struct VibeProjectsView: View {
             Text(english ? "Needs attention" : "要確認あり").tag("attention")
           }.pickerStyle(.menu)
         }
+      } else {
+        dailyFocusSection
       }
       let visibleProjects = store.projects.filter { project in
         guard showsArchive ? project.archived : !project.archived else { return false }
@@ -6530,6 +6540,70 @@ private struct VibeProjectsView: View {
       if showsArchive { portfolioInsights }
     }
     .padding(.trailing, 14)
+  }
+
+  private var dailyFocusItems: [VibeProjectFocusItem] {
+    let today = Calendar.current.startOfDay(for: Date())
+    let items = store.projects.filter { !$0.archived && $0.status != .completed }.flatMap { project in
+      project.activeIssues.map { issue in
+        VibeProjectFocusItem(
+          projectID: project.id,
+          projectTitle: project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title,
+          issue: issue,
+          overdue: issue.dueDate.map { $0 < today } ?? false)
+      }
+    }
+    return items.sorted { lhs, rhs in
+      func rank(_ item: VibeProjectFocusItem) -> Int {
+        if item.overdue { return 0 }
+        if item.issue.kind == .blocker { return 1 }
+        if item.issue.dueDate != nil { return 2 }
+        return 3
+      }
+      if rank(lhs) != rank(rhs) { return rank(lhs) < rank(rhs) }
+      if lhs.issue.priority.rank != rhs.issue.priority.rank { return lhs.issue.priority.rank > rhs.issue.priority.rank }
+      return (lhs.issue.dueDate ?? .distantFuture) < (rhs.issue.dueDate ?? .distantFuture)
+    }
+  }
+
+  private var dailyFocusSection: some View {
+    let items = dailyFocusItems
+    let overdue = items.filter(\.overdue).count
+    let blockers = items.filter { $0.issue.kind == .blocker }.count
+    return GroupBox(english ? "Today’s focus" : "今日の優先事項") {
+      VStack(alignment: .leading, spacing: 5) {
+        if items.isEmpty {
+          Label(english ? "No open tasks across active projects" : "作業中プロジェクトに未解決の課題はありません", systemImage: "checkmark.circle.fill")
+            .font(.caption).foregroundStyle(.green)
+        } else {
+          if overdue > 0 || blockers > 0 {
+            Text(english ? "\(overdue) overdue · \(blockers) blocker(s)" : "期限超過 \(overdue) 件 · ブロッカー \(blockers) 件")
+              .font(.caption).foregroundStyle(overdue > 0 ? .red : .orange)
+          }
+          ForEach(items.prefix(4)) { item in
+            Button {
+              selectedProjectID = item.projectID
+            } label: {
+              HStack(spacing: 5) {
+                Image(systemName: item.overdue ? "calendar.badge.exclamationmark" : item.issue.kind.symbol)
+                  .foregroundStyle(item.overdue || item.issue.kind == .blocker ? Color.red : item.issue.kind == .risk ? Color.orange : .secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                  Text(item.issue.title).lineLimit(1)
+                  Text(item.projectTitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                if let dueDate = item.issue.dueDate {
+                  Text(dueDate.formatted(date: .abbreviated, time: .omitted)).font(.caption2)
+                }
+              }
+              .font(.caption)
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+          }
+        }
+      }.padding(.top, 3)
+    }
   }
 
   private var portfolioInsights: some View {
