@@ -106,6 +106,7 @@ flowchart LR
 | 2.21 — Project Timeline & Milestones | 実装済み | 計画、ビルド、確認、完成、保管、再開の出来事を時系列表示 |
 | 2.22 — Milestone Notes & Decisions | 実装済み | 判断理由や次回への注意点を節目メモとして時系列へ保存 |
 | 2.23 — Project Health Dashboard | 実装済み | 目標・計画・検証・未解決事項から次に進める作業を表示 |
+| 2.24 — Project Risk & Blocker Management | 実装済み | タスク・リスク・ブロッカーを優先度と解決状態つきで管理し、次の作業へ反映 |
 
 完了条件:
 

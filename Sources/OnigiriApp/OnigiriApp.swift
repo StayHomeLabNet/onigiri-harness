@@ -750,6 +750,45 @@ private enum VibeProjectStatus: String, Codable, CaseIterable, Identifiable {
   }
 }
 
+private enum VibeProjectIssueKind: String, Codable, CaseIterable, Identifiable {
+  case task, risk, blocker
+  var id: String { rawValue }
+  func title(english: Bool) -> String {
+    switch self {
+    case .task: return english ? "Task" : "タスク"
+    case .risk: return english ? "Risk" : "リスク"
+    case .blocker: return english ? "Blocker" : "ブロッカー"
+    }
+  }
+  var symbol: String {
+    switch self { case .task: return "checklist"; case .risk: return "exclamationmark.triangle"; case .blocker: return "hand.raised.fill" }
+  }
+}
+
+private enum VibeProjectIssuePriority: String, Codable, CaseIterable, Identifiable {
+  case low, normal, high, critical
+  var id: String { rawValue }
+  func title(english: Bool) -> String {
+    switch self {
+    case .low: return english ? "Low" : "低"
+    case .normal: return english ? "Normal" : "通常"
+    case .high: return english ? "High" : "高"
+    case .critical: return english ? "Critical" : "緊急"
+    }
+  }
+  var rank: Int { switch self { case .low: return 0; case .normal: return 1; case .high: return 2; case .critical: return 3 } }
+}
+
+private struct VibeProjectIssue: Identifiable, Codable, Equatable {
+  var id: UUID = UUID()
+  var title: String
+  var kind: VibeProjectIssueKind = .task
+  var priority: VibeProjectIssuePriority = .normal
+  var resolvedAt: Date?
+  var isResolved: Bool { resolvedAt != nil }
+  func summary(english: Bool) -> String { "[\(kind.title(english: english)) · \(priority.title(english: english))] \(title)" }
+}
+
 private struct VibeProject: Identifiable, Codable, Equatable {
   var archived: Bool = false
   var id: UUID
@@ -767,6 +806,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var buildRuns: [VibeBuildRun]
   var decisions: [String]
   var openItems: [String]
+  var issues: [VibeProjectIssue]
   var memory: [VibeProjectMemoryEntry]
   var createdAt: Date
   var updatedAt: Date
@@ -775,7 +815,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     id: UUID = UUID(), archived: Bool = false, title: String, goal: String, audience: String,
     essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], validationResults: [VibeValidationResult] = [], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
-    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [],
+    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [],
     memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
   ) {
     self.id = id
@@ -794,6 +834,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     self.buildRuns = buildRuns
     self.decisions = decisions
     self.openItems = openItems
+    self.issues = issues
     self.memory = memory
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -801,7 +842,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, archived, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
-    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, memory, createdAt, updatedAt
+    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
@@ -821,11 +862,22 @@ private struct VibeProject: Identifiable, Codable, Equatable {
       proposal: try values.decodeIfPresent(VibeBuildProposal.self, forKey: .proposal),
       buildRuns: try values.decodeIfPresent([VibeBuildRun].self, forKey: .buildRuns) ?? [],
       decisions: try values.decodeIfPresent([String].self, forKey: .decisions) ?? [],
-      openItems: try values.decodeIfPresent([String].self, forKey: .openItems) ?? [],
+      openItems: [],
+      issues: try values.decodeIfPresent([VibeProjectIssue].self, forKey: .issues)
+        ?? (try values.decodeIfPresent([String].self, forKey: .openItems) ?? []).map { VibeProjectIssue(title: $0) },
       memory: try values.decodeIfPresent([VibeProjectMemoryEntry].self, forKey: .memory) ?? [],
       createdAt: try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
       updatedAt: try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date())
   }
+
+  var activeIssues: [VibeProjectIssue] {
+    issues.filter { !$0.isResolved }.sorted { lhs, rhs in
+      if lhs.kind == .blocker && rhs.kind != .blocker { return true }
+      if rhs.kind == .blocker && lhs.kind != .blocker { return false }
+      return lhs.priority.rank > rhs.priority.rank
+    }
+  }
+  var highestPriorityIssue: VibeProjectIssue? { activeIssues.first }
 
   static var blank: VibeProject {
     VibeProject(
@@ -6394,7 +6446,7 @@ private struct VibeProjectsView: View {
         guard showsArchive ? project.archived : !project.archived else { return false }
         guard showsArchive else { return true }
         let query = portfolioQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let searchable = ([project.title, project.goal] + project.openItems).joined(separator: " ").lowercased()
+        let searchable = ([project.title, project.goal] + project.activeIssues.map(\.title)).joined(separator: " ").lowercased()
         let matchesQuery = query.isEmpty || searchable.contains(query)
         let matchesFilter = portfolioFilter == "all"
           || (portfolioFilter == "passed" && project.validationResults.contains { $0.outcome == .passed })
@@ -6434,7 +6486,7 @@ private struct VibeProjectsView: View {
     let archived = store.projects.filter(\.archived)
     let passed = archived.flatMap(\.validationResults).filter { $0.outcome == .passed }.count
     let attention = archived.flatMap(\.validationResults).filter { $0.outcome != .passed }.count
-    let openItems = archived.reduce(0) { $0 + $1.openItems.count }
+    let openItems = archived.reduce(0) { $0 + $1.activeIssues.count }
     return VStack(alignment: .leading, spacing: 5) {
       Text(english ? "Portfolio insights" : "ポートフォリオの振り返り").font(.caption.bold())
       Label(english ? "\(archived.count) archived projects" : "アーカイブ済み \(archived.count) 件", systemImage: "archivebox")
@@ -6464,10 +6516,10 @@ private struct VibeProjectsView: View {
       content = (["title,status,passed,attention,openItems"] + projects.map { project in
         let passed = project.validationResults.filter { $0.outcome == .passed }.count
         let attention = project.validationResults.filter { $0.outcome != .passed }.count
-        return "\"\(project.title.replacingOccurrences(of: "\"", with: "\"\""))\",\(project.status.rawValue),\(passed),\(attention),\(project.openItems.count)"
+        return "\"\(project.title.replacingOccurrences(of: "\"", with: "\"\""))\",\(project.status.rawValue),\(passed),\(attention),\(project.activeIssues.count)"
       }).joined(separator: "\n")
     } else {
-      content = "# \(english ? "Onigiri Portfolio" : "Onigiri ポートフォリオ")\n\n" + projects.map { "## \($0.title)\n\($0.goal)\n- \(english ? "Open items" : "未解決事項"): \($0.openItems.count)" }.joined(separator: "\n\n")
+      content = "# \(english ? "Onigiri Portfolio" : "Onigiri ポートフォリオ")\n\n" + projects.map { "## \($0.title)\n\($0.goal)\n- \(english ? "Open items" : "未解決事項"): \($0.activeIssues.count)" }.joined(separator: "\n\n")
     }
     do { try content.write(to: url, atomically: true, encoding: .utf8); portfolioExportMessage = english ? "Saved" : "保存しました" } catch { portfolioExportMessage = error.localizedDescription }
   }
@@ -6507,6 +6559,8 @@ private struct VibeProjectEditor: View {
   @State private var pendingReviewAction: VibeBuildReviewAction?
   @State private var decisionDraft = ""
   @State private var openItemDraft = ""
+  @State private var issueKind: VibeProjectIssueKind = .task
+  @State private var issuePriority: VibeProjectIssuePriority = .normal
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -6713,15 +6767,19 @@ private struct VibeProjectEditor: View {
     let next = !hasGoal ? (english ? "Write the goal first." : "まず目標を書きます。")
       : !approved ? (english ? "Create and approve the build plan." : "作る計画を作成して確認します。")
       : needsAttention ? (english ? "Resolve the checks that need attention." : "要確認の結果に対応します。")
-      : project.openItems.first ?? (english ? "Review readiness before marking complete." : "完成の準備状況を確認します。")
+      : project.highestPriorityIssue?.title ?? (english ? "Review readiness before marking complete." : "完成の準備状況を確認します。")
     return GroupBox(english ? "Project health" : "プロジェクトの状態") {
       VStack(alignment: .leading, spacing: 6) {
         Label(hasGoal ? (english ? "Goal is defined" : "目標を設定済み") : (english ? "Goal needs attention" : "目標を入力してください"), systemImage: hasGoal ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
           .foregroundStyle(hasGoal ? Color.green : .orange)
         Label(approved ? (english ? "Build plan is approved" : "作る計画を確認済み") : (english ? "Build plan is not approved" : "作る計画は未確認"), systemImage: approved ? "checkmark.circle.fill" : "circle")
           .foregroundStyle(approved ? Color.green : .secondary)
-        Label(project.openItems.isEmpty ? (english ? "No open items" : "未解決事項はありません") : (english ? "\(project.openItems.count) open items" : "未解決事項 \(project.openItems.count) 件"), systemImage: project.openItems.isEmpty ? "checkmark.circle.fill" : "questionmark.circle.fill")
-          .foregroundStyle(project.openItems.isEmpty ? Color.green : .orange)
+        Label(project.activeIssues.isEmpty ? (english ? "No open items" : "未解決事項はありません") : (english ? "\(project.activeIssues.count) open items" : "未解決事項 \(project.activeIssues.count) 件"), systemImage: project.activeIssues.isEmpty ? "checkmark.circle.fill" : "questionmark.circle.fill")
+          .foregroundStyle(project.activeIssues.isEmpty ? Color.green : .orange)
+        if let blocker = project.activeIssues.first(where: { $0.kind == .blocker }) {
+          Label(english ? "Blocker: \(blocker.title)" : "ブロッカー: \(blocker.title)", systemImage: "hand.raised.fill")
+            .font(.caption).foregroundStyle(.red)
+        }
         Text((english ? "Next: " : "次にすること: ") + next).font(.caption).foregroundStyle(.secondary)
       }.padding(.top, 3)
     }
@@ -6858,7 +6916,7 @@ private struct VibeProjectEditor: View {
     project.archived = false
     project.status = .active
     if project.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      project.nextStep = project.openItems.first ?? (english ? "Review the validation results and choose the next improvement." : "確認結果を見直し、次の改善を決める。")
+      project.nextStep = project.highestPriorityIssue?.title ?? (english ? "Review the validation results and choose the next improvement." : "確認結果を見直し、次の改善を決める。")
     }
     recordMemory(kind: "reopen", detail: english ? "Restored the project to active work. Next step: \(project.nextStep)" : "プロジェクトを作業一覧へ戻しました。次にすること: \(project.nextStep)")
     saveProjectMemory()
@@ -6951,7 +7009,7 @@ private struct VibeProjectEditor: View {
 
     \(list(english ? "Build history" : "ビルド履歴", builds))
 
-    \(list(english ? "Open items" : "未解決事項", project.openItems))
+    \(list(english ? "Open items" : "未解決事項", project.activeIssues.map { $0.summary(english: english) }))
     """
   }
 
@@ -6984,15 +7042,31 @@ private struct VibeProjectEditor: View {
           })
         }
 
-        memoryDraftRow(
-          title: english ? "Open item" : "未解決事項", placeholder: english ? "For example: Decide whether sign-in is needed." : "例: ログインが必要か決める。",
-          text: $openItemDraft, add: { addMemoryDraft(kind: "open", text: $openItemDraft) })
-        if !project.openItems.isEmpty {
-          memoryList(project.openItems, symbol: "questionmark.circle", remove: { index in
-            project.openItems.remove(at: index)
-            recordMemory(kind: "open", detail: english ? "Resolved or removed an open item." : "未解決事項を解決または削除しました。")
-            saveProjectMemory()
-          })
+        VStack(alignment: .leading, spacing: 7) {
+          Text(english ? "Tasks, risks, and blockers" : "タスク・リスク・ブロッカー").font(.caption).foregroundStyle(.secondary)
+          HStack {
+            TextField(english ? "For example: Decide whether sign-in is needed." : "例: ログインが必要か決める。", text: $openItemDraft)
+              .textFieldStyle(.roundedBorder)
+            Picker(english ? "Type" : "種類", selection: $issueKind) {
+              ForEach(VibeProjectIssueKind.allCases) { Text($0.title(english: english)).tag($0) }
+            }.labelsHidden().frame(width: 112)
+            Picker(english ? "Priority" : "優先度", selection: $issuePriority) {
+              ForEach(VibeProjectIssuePriority.allCases) { Text($0.title(english: english)).tag($0) }
+            }.labelsHidden().frame(width: 96)
+            Button(english ? "Add" : "追加", systemImage: "plus") { addIssueDraft() }
+              .disabled(openItemDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          }
+          if !project.activeIssues.isEmpty {
+            ForEach(project.activeIssues) { issue in
+              HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Image(systemName: issue.kind.symbol).foregroundStyle(issue.kind == .blocker ? Color.red : issue.kind == .risk ? Color.orange : .secondary)
+                Text(issue.summary(english: english)).font(.caption).textSelection(.enabled)
+                Spacer()
+                Button(english ? "Resolve" : "解決", systemImage: "checkmark") { resolveIssue(issue.id) }
+                  .buttonStyle(.borderless).font(.caption)
+              }
+            }
+          }
         }
 
         if !project.memory.isEmpty {
@@ -7344,6 +7418,24 @@ private struct VibeProjectEditor: View {
     saveProjectMemory()
   }
 
+  private func addIssueDraft() {
+    let title = openItemDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !title.isEmpty else { return }
+    let issue = VibeProjectIssue(title: title, kind: issueKind, priority: issuePriority)
+    project.issues.append(issue)
+    recordMemory(kind: "issue", detail: english ? "Added \(issue.summary(english: true))." : "\(issue.summary(english: false)) を追加しました。")
+    openItemDraft = ""
+    saveProjectMemory()
+  }
+
+  private func resolveIssue(_ id: UUID) {
+    guard let index = project.issues.firstIndex(where: { $0.id == id }) else { return }
+    let issue = project.issues[index]
+    project.issues[index].resolvedAt = Date()
+    recordMemory(kind: "issue", detail: english ? "Resolved \(issue.summary(english: true))." : "\(issue.summary(english: false)) を解決しました。")
+    saveProjectMemory()
+  }
+
   private func recordMemory(kind: String, detail: String) {
     project.memory.insert(VibeProjectMemoryEntry(kind: kind, detail: detail), at: 0)
     if project.memory.count > 100 { project.memory = Array(project.memory.prefix(100)) }
@@ -7361,6 +7453,7 @@ private struct VibeProjectEditor: View {
     switch kind {
     case "decision": return "checkmark.circle"
     case "open": return "questionmark.circle"
+    case "issue": return "exclamationmark.bubble"
     case "proposal": return "doc.text"
     case "build": return "hammer"
     case "apply": return "checkmark.seal"
