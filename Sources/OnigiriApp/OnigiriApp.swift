@@ -6632,6 +6632,7 @@ private struct VibeProjectEditor: View {
         validationEvidenceSection
         completionReadinessSection
         handoffSection
+        timelineSection
         projectMemorySection
 
         HStack {
@@ -6852,6 +6853,28 @@ private struct VibeProjectEditor: View {
         Spacer()
         Button(english ? "Export Markdown" : "Markdownを書き出す", systemImage: "square.and.arrow.up") { exportProjectHandoff() }
       }.padding(.top, 4)
+    }
+  }
+
+  private var timelineSection: some View {
+    GroupBox(english ? "Timeline and milestones" : "タイムラインと節目") {
+      if project.memory.isEmpty {
+        Text(english ? "Milestones will appear as you plan, build, review, and complete this project." : "計画、ビルド、確認、完成を進めると、ここに節目が表示されます。")
+          .font(.caption).foregroundStyle(.secondary)
+      } else {
+        VStack(alignment: .leading, spacing: 7) {
+          ForEach(project.memory.prefix(12)) { entry in
+            HStack(alignment: .top, spacing: 8) {
+              Image(systemName: memorySymbol(for: entry.kind)).foregroundStyle(.tint)
+              VStack(alignment: .leading, spacing: 1) {
+                Text(entry.detail).font(.caption)
+                Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                  .font(.caption2).foregroundStyle(.secondary)
+              }
+            }
+          }
+        }.padding(.top, 4)
+      }
     }
   }
 
@@ -7304,6 +7327,10 @@ private struct VibeProjectEditor: View {
     case "apply": return "checkmark.seal"
     case "revert": return "arrow.uturn.backward"
     case "discard": return "trash"
+    case "completion": return "checkmark.seal"
+    case "archive": return "archivebox"
+    case "reopen": return "tray.and.arrow.up"
+    case "template": return "square.on.square"
     default: return "clock"
     }
   }
