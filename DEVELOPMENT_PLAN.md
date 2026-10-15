@@ -107,6 +107,7 @@ flowchart LR
 | 2.22 — Milestone Notes & Decisions | 実装済み | 判断理由や次回への注意点を節目メモとして時系列へ保存 |
 | 2.23 — Project Health Dashboard | 実装済み | 目標・計画・検証・未解決事項から次に進める作業を表示 |
 | 2.24 — Project Risk & Blocker Management | 実装済み | タスク・リスク・ブロッカーを優先度と解決状態つきで管理し、次の作業へ反映 |
+| 2.25 — Project Dependencies & Sequencing | 実装済み | 課題間の依存関係を設定し、着手可能な順序と依存関係待ちを可視化 |
 
 完了条件:
 

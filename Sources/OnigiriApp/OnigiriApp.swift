@@ -784,9 +784,31 @@ private struct VibeProjectIssue: Identifiable, Codable, Equatable {
   var title: String
   var kind: VibeProjectIssueKind = .task
   var priority: VibeProjectIssuePriority = .normal
+  var dependencies: [UUID] = []
   var resolvedAt: Date?
   var isResolved: Bool { resolvedAt != nil }
   func summary(english: Bool) -> String { "[\(kind.title(english: english)) · \(priority.title(english: english))] \(title)" }
+
+  init(id: UUID = UUID(), title: String, kind: VibeProjectIssueKind = .task, priority: VibeProjectIssuePriority = .normal, dependencies: [UUID] = [], resolvedAt: Date? = nil) {
+    self.id = id
+    self.title = title
+    self.kind = kind
+    self.priority = priority
+    self.dependencies = dependencies
+    self.resolvedAt = resolvedAt
+  }
+
+  private enum CodingKeys: String, CodingKey { case id, title, kind, priority, dependencies, resolvedAt }
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
+      title: try values.decode(String.self, forKey: .title),
+      kind: try values.decodeIfPresent(VibeProjectIssueKind.self, forKey: .kind) ?? .task,
+      priority: try values.decodeIfPresent(VibeProjectIssuePriority.self, forKey: .priority) ?? .normal,
+      dependencies: try values.decodeIfPresent([UUID].self, forKey: .dependencies) ?? [],
+      resolvedAt: try values.decodeIfPresent(Date.self, forKey: .resolvedAt))
+  }
 }
 
 private struct VibeProject: Identifiable, Codable, Equatable {
@@ -878,6 +900,14 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     }
   }
   var highestPriorityIssue: VibeProjectIssue? { activeIssues.first }
+  func hasUnresolvedDependencies(for issue: VibeProjectIssue) -> Bool {
+    issue.dependencies.contains { dependencyID in
+      issues.contains { $0.id == dependencyID && !$0.isResolved }
+    }
+  }
+  var readyIssues: [VibeProjectIssue] { activeIssues.filter { !hasUnresolvedDependencies(for: $0) } }
+  var dependencyBlockedIssues: [VibeProjectIssue] { activeIssues.filter { hasUnresolvedDependencies(for: $0) } }
+  var nextActionableIssue: VibeProjectIssue? { readyIssues.first }
 
   static var blank: VibeProject {
     VibeProject(
@@ -6767,7 +6797,10 @@ private struct VibeProjectEditor: View {
     let next = !hasGoal ? (english ? "Write the goal first." : "まず目標を書きます。")
       : !approved ? (english ? "Create and approve the build plan." : "作る計画を作成して確認します。")
       : needsAttention ? (english ? "Resolve the checks that need attention." : "要確認の結果に対応します。")
-      : project.highestPriorityIssue?.title ?? (english ? "Review readiness before marking complete." : "完成の準備状況を確認します。")
+      : project.nextActionableIssue?.title
+        ?? (project.activeIssues.isEmpty
+          ? (english ? "Review readiness before marking complete." : "完成の準備状況を確認します。")
+          : (english ? "Resolve a dependency before starting the next task." : "次のタスクに着手する前に依存関係を解決します。"))
     return GroupBox(english ? "Project health" : "プロジェクトの状態") {
       VStack(alignment: .leading, spacing: 6) {
         Label(hasGoal ? (english ? "Goal is defined" : "目標を設定済み") : (english ? "Goal needs attention" : "目標を入力してください"), systemImage: hasGoal ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
@@ -6779,6 +6812,10 @@ private struct VibeProjectEditor: View {
         if let blocker = project.activeIssues.first(where: { $0.kind == .blocker }) {
           Label(english ? "Blocker: \(blocker.title)" : "ブロッカー: \(blocker.title)", systemImage: "hand.raised.fill")
             .font(.caption).foregroundStyle(.red)
+        }
+        if !project.dependencyBlockedIssues.isEmpty {
+          Label(english ? "\(project.dependencyBlockedIssues.count) item(s) waiting on dependencies" : "依存関係待ち \(project.dependencyBlockedIssues.count) 件", systemImage: "arrow.triangle.branch")
+            .font(.caption).foregroundStyle(.orange)
         }
         Text((english ? "Next: " : "次にすること: ") + next).font(.caption).foregroundStyle(.secondary)
       }.padding(.top, 3)
@@ -6916,7 +6953,7 @@ private struct VibeProjectEditor: View {
     project.archived = false
     project.status = .active
     if project.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      project.nextStep = project.highestPriorityIssue?.title ?? (english ? "Review the validation results and choose the next improvement." : "確認結果を見直し、次の改善を決める。")
+      project.nextStep = project.nextActionableIssue?.title ?? project.highestPriorityIssue?.title ?? (english ? "Review the validation results and choose the next improvement." : "確認結果を見直し、次の改善を決める。")
     }
     recordMemory(kind: "reopen", detail: english ? "Restored the project to active work. Next step: \(project.nextStep)" : "プロジェクトを作業一覧へ戻しました。次にすること: \(project.nextStep)")
     saveProjectMemory()
@@ -7058,12 +7095,32 @@ private struct VibeProjectEditor: View {
           }
           if !project.activeIssues.isEmpty {
             ForEach(project.activeIssues) { issue in
-              HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Image(systemName: issue.kind.symbol).foregroundStyle(issue.kind == .blocker ? Color.red : issue.kind == .risk ? Color.orange : .secondary)
-                Text(issue.summary(english: english)).font(.caption).textSelection(.enabled)
-                Spacer()
-                Button(english ? "Resolve" : "解決", systemImage: "checkmark") { resolveIssue(issue.id) }
-                  .buttonStyle(.borderless).font(.caption)
+              VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                  Image(systemName: issue.kind.symbol).foregroundStyle(issue.kind == .blocker ? Color.red : issue.kind == .risk ? Color.orange : .secondary)
+                  Text(issue.summary(english: english)).font(.caption).textSelection(.enabled)
+                  Spacer()
+                  Menu(english ? "Depends on" : "依存先") {
+                    let candidates = project.activeIssues.filter { $0.id != issue.id }
+                    if candidates.isEmpty { Text(english ? "No other open items" : "ほかに未解決事項はありません") }
+                    ForEach(candidates) { candidate in
+                      Button {
+                        toggleDependency(issueID: issue.id, dependencyID: candidate.id)
+                      } label: {
+                        Label(candidate.title, systemImage: issue.dependencies.contains(candidate.id) ? "checkmark" : "circle")
+                      }
+                      .disabled(wouldCreateCycle(issueID: issue.id, dependencyID: candidate.id))
+                    }
+                  }
+                  .font(.caption)
+                  Button(english ? "Resolve" : "解決", systemImage: "checkmark") { resolveIssue(issue.id) }
+                    .buttonStyle(.borderless).font(.caption)
+                }
+                if project.hasUnresolvedDependencies(for: issue) {
+                  let names = project.issues.filter { issue.dependencies.contains($0.id) && !$0.isResolved }.map(\.title).joined(separator: ", ")
+                  Label(english ? "Waiting for: \(names)" : "依存関係待ち: \(names)", systemImage: "arrow.triangle.branch")
+                    .font(.caption2).foregroundStyle(.orange)
+                }
               }
             }
           }
@@ -7436,6 +7493,30 @@ private struct VibeProjectEditor: View {
     saveProjectMemory()
   }
 
+  private func toggleDependency(issueID: UUID, dependencyID: UUID) {
+    guard let index = project.issues.firstIndex(where: { $0.id == issueID }) else { return }
+    if project.issues[index].dependencies.contains(dependencyID) {
+      project.issues[index].dependencies.removeAll { $0 == dependencyID }
+      recordMemory(kind: "dependency", detail: english ? "Removed a project dependency." : "課題の依存関係を解除しました。")
+    } else {
+      guard !wouldCreateCycle(issueID: issueID, dependencyID: dependencyID) else { return }
+      project.issues[index].dependencies.append(dependencyID)
+      recordMemory(kind: "dependency", detail: english ? "Added a project dependency." : "課題の依存関係を追加しました。")
+    }
+    saveProjectMemory()
+  }
+
+  private func wouldCreateCycle(issueID: UUID, dependencyID: UUID) -> Bool {
+    func reaches(_ currentID: UUID, targetID: UUID, visited: Set<UUID>) -> Bool {
+      if currentID == targetID { return true }
+      guard !visited.contains(currentID), let issue = project.issues.first(where: { $0.id == currentID }) else { return false }
+      var nextVisited = visited
+      nextVisited.insert(currentID)
+      return issue.dependencies.contains { reaches($0, targetID: targetID, visited: nextVisited) }
+    }
+    return reaches(dependencyID, targetID: issueID, visited: [])
+  }
+
   private func recordMemory(kind: String, detail: String) {
     project.memory.insert(VibeProjectMemoryEntry(kind: kind, detail: detail), at: 0)
     if project.memory.count > 100 { project.memory = Array(project.memory.prefix(100)) }
@@ -7454,6 +7535,7 @@ private struct VibeProjectEditor: View {
     case "decision": return "checkmark.circle"
     case "open": return "questionmark.circle"
     case "issue": return "exclamationmark.bubble"
+    case "dependency": return "arrow.triangle.branch"
     case "proposal": return "doc.text"
     case "build": return "hammer"
     case "apply": return "checkmark.seal"
