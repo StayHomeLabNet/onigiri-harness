@@ -7325,6 +7325,9 @@ private struct VibeProjectEditor: View {
   @State private var selectedCoordinatorIssueID: UUID?
   @State private var coordinatorPlanSummary = ""
   @State private var coordinatorPlanTargets = ""
+  @State private var integrationFileSets: [UUID: [String]] = [:]
+  @State private var integrationInspecting = false
+  @State private var integrationMessage: String?
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -7451,6 +7454,7 @@ private struct VibeProjectEditor: View {
         proposalSection
         guidedBuildSection
         reviewSection
+        integrationReviewSection
         validationEvidenceSection
         completionReadinessSection
         handoffSection
@@ -8354,6 +8358,147 @@ private struct VibeProjectEditor: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!review.hasChanges || run.appliedAt != nil)
               }
+            }
+          }
+        }
+        .padding(.top, 4)
+      }
+    }
+  }
+
+  private var integrationCandidates: [VibeBuildRun] {
+    project.buildRuns.filter {
+      $0.coordinatorIssueID != nil && $0.reviewedAt != nil && $0.appliedAt == nil
+        && ($0.status == "完了" || $0.status == "Completed")
+    }
+  }
+
+  private func integrationOrder(for runs: [VibeBuildRun]) -> [VibeBuildRun] {
+    var remaining = runs
+    var ordered: [VibeBuildRun] = []
+    while !remaining.isEmpty {
+      if let index = remaining.firstIndex(where: { run in
+        guard let issueID = run.coordinatorIssueID,
+          let issue = project.issues.first(where: { $0.id == issueID }) else { return true }
+        let remainingIssueIDs = Set(remaining.compactMap(\.coordinatorIssueID))
+        return !issue.dependencies.contains { dependency in
+          remainingIssueIDs.contains(dependency)
+        }
+      }) {
+        ordered.append(remaining.remove(at: index))
+      } else {
+        ordered.append(contentsOf: remaining.sorted { $0.startedAt < $1.startedAt })
+        break
+      }
+    }
+    return ordered
+  }
+
+  private var orderedIntegrationCandidates: [VibeBuildRun] {
+    integrationOrder(for: integrationCandidates)
+  }
+
+  private var integrationFileConflicts: [(file: String, runs: [VibeBuildRun])] {
+    var map: [String: [VibeBuildRun]] = [:]
+    for run in orderedIntegrationCandidates {
+      for file in integrationFileSets[run.id] ?? [] {
+        map[file, default: []].append(run)
+      }
+    }
+    return map.compactMap { file, runs in runs.count > 1 ? (file, runs) : nil }
+      .sorted { $0.file.localizedStandardCompare($1.file) == .orderedAscending }
+  }
+
+  @MainActor private func inspectIntegrationCandidates() async {
+    integrationInspecting = true
+    integrationMessage = english ? "Inspecting reviewed lanes…" : "確認済みレーンを調べています…"
+    defer { integrationInspecting = false }
+    var fileSets: [UUID: [String]] = [:]
+    var unavailable = 0
+    for run in orderedIntegrationCandidates {
+      do {
+        fileSets[run.id] = try VibeBuildWorkspace.review(run).changedFiles
+      } catch {
+        unavailable += 1
+      }
+    }
+    integrationFileSets = fileSets
+    if unavailable > 0 {
+      integrationMessage = english
+        ? "Some isolated workspaces could not be inspected. Open each lane before applying it."
+        : "一部の隔離環境を確認できませんでした。適用前に各レーンを開いて確認してください。"
+    } else if integrationFileConflicts.isEmpty {
+      integrationMessage = english
+        ? "No overlapping changed files were found. Apply in the recommended order, reviewing each patch."
+        : "変更ファイルの重複は見つかりませんでした。推奨順で各パッチを確認して適用できます。"
+    } else {
+      integrationMessage = english
+        ? "Overlapping changed files were found. Apply these lanes sequentially and re-check the later patch after each application."
+        : "変更ファイルの重複があります。逐次適用し、各適用後に後続パッチを再確認してください。"
+    }
+  }
+
+  @ViewBuilder private var integrationReviewSection: some View {
+    if !integrationCandidates.isEmpty {
+      GroupBox(english ? "Coordinator merge and integration review" : "コーディネーター統合レビュー") {
+        VStack(alignment: .leading, spacing: 9) {
+          Text(english
+            ? "Compare reviewed lanes before applying them. The recommended order follows project dependencies; every application still opens its individual patch review."
+            : "レビュー済みレーンを、元フォルダへ適用する前に比較します。推奨順はプロジェクトの依存関係に従います。適用前には各パッチを個別に確認します。")
+            .font(.caption).foregroundStyle(.secondary)
+          HStack {
+            Button(english ? "Analyze integration" : "統合を確認", systemImage: "rectangle.3.group.bubble") {
+              Task { await inspectIntegrationCandidates() }
+            }
+            .disabled(integrationInspecting)
+            if let first = orderedIntegrationCandidates.first {
+              Button(english ? "Open next review" : "次のレビューを開く", systemImage: "doc.text.magnifyingglass") {
+                selectedBuildRunID = first.id
+                Task { await inspectSelectedBuild() }
+              }
+              .disabled(reviewingBuild)
+            }
+            Spacer()
+            Text(english ? "\(integrationCandidates.count) lane(s) ready" : "\(integrationCandidates.count) レーンが適用待ち")
+              .font(.caption).foregroundStyle(.secondary)
+          }
+          if let integrationMessage {
+            Text(integrationMessage).font(.caption).foregroundStyle(.secondary)
+          }
+          ForEach(Array(orderedIntegrationCandidates.enumerated()), id: \.element.id) { index, run in
+            let issue = run.coordinatorIssueID.flatMap { id in project.issues.first { $0.id == id } }
+            let validation = run.taskID.flatMap { id in project.validationResults.first { $0.taskID == id } }
+            HStack(alignment: .top, spacing: 8) {
+              Text("\(index + 1)").font(.caption.bold()).frame(width: 18)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(issue?.title ?? (english ? "Coordinated task" : "コーディネーター課題")).font(.caption.bold())
+                if let plan = run.coordinatorPlan {
+                  Text(plan.targetPaths.joined(separator: ", "))
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                if let validation {
+                  Label(validation.outcome.title(english: english), systemImage: validation.outcome.symbol)
+                    .font(.caption2).foregroundStyle(validation.outcome == .passed ? Color.green : Color.orange)
+                }
+              }
+              Spacer()
+              Button(english ? "Review" : "確認", systemImage: "arrow.right") {
+                selectedBuildRunID = run.id
+                Task { await inspectSelectedBuild() }
+              }
+              .font(.caption).disabled(reviewingBuild)
+            }
+          }
+          if !integrationFileConflicts.isEmpty {
+            Divider()
+            Label(english ? "Overlapping changed files" : "変更ファイルの重複", systemImage: "exclamationmark.triangle.fill")
+              .font(.caption.bold()).foregroundStyle(.orange)
+            ForEach(integrationFileConflicts, id: \.file) { conflict in
+              let labels = conflict.runs.compactMap { run in
+                run.coordinatorIssueID.flatMap { id in project.issues.first { $0.id == id }?.title }
+              }
+              Text("\(conflict.file) — \(labels.joined(separator: english ? ", " : "、"))")
+                .font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
             }
           }
         }
