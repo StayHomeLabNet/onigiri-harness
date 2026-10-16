@@ -121,6 +121,7 @@ flowchart LR
 | 2.36 — Project-Scoped Chat Context | 実装済み | 会話ごとにプロジェクトを選択し、目標と明示メモリーを安全にチャットへ適用 |
 | 2.37 — Project Coordinator | 実装済み | 依存関係を満たした課題を順番に選び、隔離AIビルドへ安全に委任 |
 | 2.38 — Coordinator Task Runs & Review Queue | 実装済み | 委任した課題とAIビルドを関連付け、実行中・確認待ち・完了をレビューキューで追跡 |
+| 2.39 — Coordinator Policies & Parallel Lanes | 実装済み | 逐次／独立課題の並列実行、最大レーン数、確認必須ポリシーを保存し、委任数とレビュー待ちを安全に制御 |
 
 完了条件:
 

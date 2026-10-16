@@ -856,6 +856,23 @@ private struct VibeExplicitProjectMemory: Codable, Equatable {
   }
 }
 
+private enum VibeCoordinatorExecutionMode: String, Codable, CaseIterable, Identifiable {
+  case sequential, independentParallel
+  var id: String { rawValue }
+  func title(english: Bool) -> String {
+    switch self {
+    case .sequential: return english ? "One at a time" : "逐次実行"
+    case .independentParallel: return english ? "Independent parallel lanes" : "独立課題を並列実行"
+    }
+  }
+}
+
+private struct VibeCoordinatorPolicy: Codable, Equatable {
+  var executionMode: VibeCoordinatorExecutionMode = .sequential
+  var maximumParallelTasks: Int = 2
+  var requiresHumanReview = true
+}
+
 private struct VibeProject: Identifiable, Codable, Equatable {
   var archived: Bool = false
   var id: UUID
@@ -875,6 +892,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var openItems: [String]
   var issues: [VibeProjectIssue]
   var explicitMemory: VibeExplicitProjectMemory
+  var coordinatorPolicy: VibeCoordinatorPolicy
   var memory: [VibeProjectMemoryEntry]
   var createdAt: Date
   var updatedAt: Date
@@ -883,7 +901,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     id: UUID = UUID(), archived: Bool = false, title: String, goal: String, audience: String,
     essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], validationResults: [VibeValidationResult] = [], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
-    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(),
+    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(), coordinatorPolicy: VibeCoordinatorPolicy = VibeCoordinatorPolicy(),
     memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
   ) {
     self.id = id
@@ -904,6 +922,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     self.openItems = openItems
     self.issues = issues
     self.explicitMemory = explicitMemory
+    self.coordinatorPolicy = coordinatorPolicy
     self.memory = memory
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -911,7 +930,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, archived, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
-    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, memory, createdAt, updatedAt
+    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, coordinatorPolicy, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
@@ -935,6 +954,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
       issues: try values.decodeIfPresent([VibeProjectIssue].self, forKey: .issues)
         ?? (try values.decodeIfPresent([String].self, forKey: .openItems) ?? []).map { VibeProjectIssue(title: $0) },
       explicitMemory: try values.decodeIfPresent(VibeExplicitProjectMemory.self, forKey: .explicitMemory) ?? VibeExplicitProjectMemory(),
+      coordinatorPolicy: try values.decodeIfPresent(VibeCoordinatorPolicy.self, forKey: .coordinatorPolicy) ?? VibeCoordinatorPolicy(),
       memory: try values.decodeIfPresent([VibeProjectMemoryEntry].self, forKey: .memory) ?? [],
       createdAt: try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
       updatedAt: try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date())
@@ -1182,7 +1202,7 @@ private enum VibeBuildWorkspace {
       sourceHasUncommittedChanges: !status.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
   }
 
-  static func prepare(sourceDirectory: String, projectID: UUID) throws -> String {
+  static func prepare(sourceDirectory: String, projectID: UUID, runID: UUID = UUID()) throws -> String {
     let sourceURL = URL(fileURLWithPath: sourceDirectory, isDirectory: true).standardizedFileURL
     let preflight = try preflight(sourceDirectory: sourceURL.path)
     guard !preflight.sourceHasUncommittedChanges else {
@@ -1193,7 +1213,8 @@ private enum VibeBuildWorkspace {
       for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
       .appending(path: "OnigiriHarness/VibeBuilds/\(projectID.uuidString)", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    let destination = root.appending(path: ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-"), directoryHint: .isDirectory)
+    let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+    let destination = root.appending(path: "\(timestamp)-\(runID.uuidString.prefix(8))", directoryHint: .isDirectory)
 
     if preflight.isGitRepository {
       _ = try runGit(arguments: ["-C", sourceURL.path, "worktree", "prune"])
@@ -7554,6 +7575,51 @@ private struct VibeProjectEditor: View {
     }
   }
 
+  private var coordinatorActiveRuns: [VibeBuildRun] {
+    project.buildRuns.filter { run in
+      run.coordinatorIssueID != nil && (run.status == "実行中" || run.status == "Running")
+    }
+  }
+
+  private var coordinatorReviewWaitingRuns: [VibeBuildRun] {
+    project.buildRuns.filter { run in
+      run.coordinatorIssueID != nil
+        && run.status != "実行中" && run.status != "Running"
+        && run.reviewedAt == nil && run.appliedAt == nil
+    }
+  }
+
+  private func canDelegateCoordinatorIssue(_ issue: VibeProjectIssue) -> Bool {
+    guard !preparingBuild else { return false }
+    if project.coordinatorPolicy.requiresHumanReview && !coordinatorReviewWaitingRuns.isEmpty {
+      return false
+    }
+    switch project.coordinatorPolicy.executionMode {
+    case .sequential:
+      return coordinatorActiveRuns.isEmpty
+    case .independentParallel:
+      return coordinatorActiveRuns.count < project.coordinatorPolicy.maximumParallelTasks
+    }
+  }
+
+  private var coordinatorPolicyMessage: String {
+    if project.coordinatorPolicy.requiresHumanReview && !coordinatorReviewWaitingRuns.isEmpty {
+      return english
+        ? "Review the completed coordinated build before delegating another item."
+        : "次の委任の前に、完了したコーディネーター・ビルドを確認してください。"
+    }
+    switch project.coordinatorPolicy.executionMode {
+    case .sequential:
+      return coordinatorActiveRuns.isEmpty
+        ? (english ? "One coordinated build can start now." : "コーディネーター・ビルドを1件開始できます。")
+        : (english ? "Wait for the current coordinated build to finish." : "現在のコーディネーター・ビルドの完了を待ちます。")
+    case .independentParallel:
+      return english
+        ? "\(coordinatorActiveRuns.count) of \(project.coordinatorPolicy.maximumParallelTasks) independent lanes are running."
+        : "独立レーンは \(project.coordinatorPolicy.maximumParallelTasks) 件中 \(coordinatorActiveRuns.count) 件が実行中です。"
+    }
+  }
+
   private var projectCoordinatorSection: some View {
     let ready = project.readyIssues
     let selectedID = selectedCoordinatorIssueID ?? ready.first?.id
@@ -7561,8 +7627,26 @@ private struct VibeProjectEditor: View {
     return GroupBox(english ? "Project coordinator" : "プロジェクト・コーディネーター") {
       VStack(alignment: .leading, spacing: 8) {
         Text(english
-          ? "Choose one dependency-ready item. Onigiri sends it to an isolated AI build and keeps the next items waiting until you review the result."
-          : "依存関係を満たした課題を1件選びます。Onigiriは隔離AIビルドへ委任し、結果を確認するまで次の課題を待機させます。")
+          ? "Choose a dependency-ready item. Every delegation gets its own isolated workspace; parallel lanes are for work you have marked as independent."
+          : "依存関係を満たした課題を選びます。委任ごとに専用の隔離環境を作ります。並列レーンには、独立していると判断した課題だけを置いてください。")
+          .font(.caption).foregroundStyle(.secondary)
+        Divider()
+        Picker(english ? "Execution policy" : "実行ポリシー", selection: $project.coordinatorPolicy.executionMode) {
+          ForEach(VibeCoordinatorExecutionMode.allCases) { mode in
+            Text(mode.title(english: english)).tag(mode)
+          }
+        }
+        .pickerStyle(.menu)
+        .onChange(of: project.coordinatorPolicy.executionMode) { _, _ in saveProjectMemory() }
+        if project.coordinatorPolicy.executionMode == .independentParallel {
+          Stepper(
+            english ? "Maximum parallel lanes: \(project.coordinatorPolicy.maximumParallelTasks)" : "最大並列レーン数: \(project.coordinatorPolicy.maximumParallelTasks)",
+            value: $project.coordinatorPolicy.maximumParallelTasks, in: 2...4)
+            .onChange(of: project.coordinatorPolicy.maximumParallelTasks) { _, _ in saveProjectMemory() }
+        }
+        Toggle(english ? "Require my review before the next delegation" : "次の委任前に自分の確認を必須にする", isOn: $project.coordinatorPolicy.requiresHumanReview)
+          .onChange(of: project.coordinatorPolicy.requiresHumanReview) { _, _ in saveProjectMemory() }
+        Label(coordinatorPolicyMessage, systemImage: project.coordinatorPolicy.executionMode == .independentParallel ? "arrow.triangle.branch" : "arrow.right")
           .font(.caption).foregroundStyle(.secondary)
         if ready.isEmpty {
           Label(project.activeIssues.isEmpty
@@ -7578,6 +7662,18 @@ private struct VibeProjectEditor: View {
             }
           }
           .pickerStyle(.menu)
+          if project.coordinatorPolicy.executionMode == .independentParallel {
+            VStack(alignment: .leading, spacing: 3) {
+              Text(english ? "Suggested lanes" : "レーン候補")
+                .font(.caption.bold()).foregroundStyle(.secondary)
+              ForEach(Array(ready.enumerated()), id: \.element.id) { index, issue in
+                Text(english
+                  ? "Lane \(index % project.coordinatorPolicy.maximumParallelTasks + 1): \(issue.title)"
+                  : "レーン \(index % project.coordinatorPolicy.maximumParallelTasks + 1): \(issue.title)")
+                  .font(.caption2).foregroundStyle(.secondary)
+              }
+            }
+          }
           HStack {
             Button(english ? "Set as next step" : "次にすることへ設定", systemImage: "arrow.right.circle") {
               guard let selected else { return }
@@ -7590,7 +7686,7 @@ private struct VibeProjectEditor: View {
                 Task { await startGuidedBuild(for: selected) }
               }
               .buttonStyle(.borderedProminent)
-              .disabled(preparingBuild || sourceDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+              .disabled(sourceDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canDelegateCoordinatorIssue(selected))
             } else if proposal?.status != .approved {
               Text(english ? "Approve the build proposal to delegate work." : "作る計画を確認済みにすると、AIへ委任できます。")
                 .font(.caption2).foregroundStyle(.secondary)
@@ -8423,6 +8519,10 @@ private struct VibeProjectEditor: View {
 
   @MainActor private func startGuidedBuild(for coordinatorIssue: VibeProjectIssue? = nil) async {
     guard let proposal, proposal.status == .approved else { return }
+    if let coordinatorIssue, !canDelegateCoordinatorIssue(coordinatorIssue) {
+      buildMessage = coordinatorPolicyMessage
+      return
+    }
     preparingBuild = true
     buildMessage = english ? "Preparing an isolated workspace…" : "隔離した作業コピーを準備しています…"
     defer { preparingBuild = false }
