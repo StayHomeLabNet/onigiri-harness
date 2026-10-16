@@ -873,6 +873,19 @@ private struct VibeCoordinatorPolicy: Codable, Equatable {
   var requiresHumanReview = true
 }
 
+private struct VibeCoordinatorPlan: Identifiable, Codable, Equatable {
+  var id: UUID = UUID()
+  var issueID: UUID
+  var summary: String
+  var targetPaths: [String]
+  var createdAt: Date = Date()
+  var updatedAt: Date = Date()
+
+  var isReady: Bool {
+    !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !targetPaths.isEmpty
+  }
+}
+
 private struct VibeProject: Identifiable, Codable, Equatable {
   var archived: Bool = false
   var id: UUID
@@ -893,6 +906,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var issues: [VibeProjectIssue]
   var explicitMemory: VibeExplicitProjectMemory
   var coordinatorPolicy: VibeCoordinatorPolicy
+  var coordinatorPlans: [VibeCoordinatorPlan]
   var memory: [VibeProjectMemoryEntry]
   var createdAt: Date
   var updatedAt: Date
@@ -901,7 +915,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     id: UUID = UUID(), archived: Bool = false, title: String, goal: String, audience: String,
     essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], validationResults: [VibeValidationResult] = [], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
-    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(), coordinatorPolicy: VibeCoordinatorPolicy = VibeCoordinatorPolicy(),
+    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(), coordinatorPolicy: VibeCoordinatorPolicy = VibeCoordinatorPolicy(), coordinatorPlans: [VibeCoordinatorPlan] = [],
     memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
   ) {
     self.id = id
@@ -923,6 +937,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     self.issues = issues
     self.explicitMemory = explicitMemory
     self.coordinatorPolicy = coordinatorPolicy
+    self.coordinatorPlans = coordinatorPlans
     self.memory = memory
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -930,7 +945,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, archived, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
-    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, coordinatorPolicy, memory, createdAt, updatedAt
+    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, coordinatorPolicy, coordinatorPlans, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
@@ -955,6 +970,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
         ?? (try values.decodeIfPresent([String].self, forKey: .openItems) ?? []).map { VibeProjectIssue(title: $0) },
       explicitMemory: try values.decodeIfPresent(VibeExplicitProjectMemory.self, forKey: .explicitMemory) ?? VibeExplicitProjectMemory(),
       coordinatorPolicy: try values.decodeIfPresent(VibeCoordinatorPolicy.self, forKey: .coordinatorPolicy) ?? VibeCoordinatorPolicy(),
+      coordinatorPlans: try values.decodeIfPresent([VibeCoordinatorPlan].self, forKey: .coordinatorPlans) ?? [],
       memory: try values.decodeIfPresent([VibeProjectMemoryEntry].self, forKey: .memory) ?? [],
       createdAt: try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
       updatedAt: try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date())
@@ -1094,9 +1110,10 @@ private struct VibeBuildRun: Identifiable, Codable, Equatable {
   var appliedAt: Date?
   var revertedAt: Date?
   var coordinatorIssueID: UUID?
+  var coordinatorPlan: VibeCoordinatorPlan?
   var reviewedAt: Date?
 
-  init(id: UUID = UUID(), provider: AITaskProvider, sourceDirectory: String, workspaceDirectory: String, taskID: UUID? = nil, startedAt: Date = Date(), status: String, detail: String, appliedAt: Date? = nil, revertedAt: Date? = nil, coordinatorIssueID: UUID? = nil, reviewedAt: Date? = nil) {
+  init(id: UUID = UUID(), provider: AITaskProvider, sourceDirectory: String, workspaceDirectory: String, taskID: UUID? = nil, startedAt: Date = Date(), status: String, detail: String, appliedAt: Date? = nil, revertedAt: Date? = nil, coordinatorIssueID: UUID? = nil, coordinatorPlan: VibeCoordinatorPlan? = nil, reviewedAt: Date? = nil) {
     self.id = id
     self.provider = provider
     self.sourceDirectory = sourceDirectory
@@ -1108,10 +1125,11 @@ private struct VibeBuildRun: Identifiable, Codable, Equatable {
     self.appliedAt = appliedAt
     self.revertedAt = revertedAt
     self.coordinatorIssueID = coordinatorIssueID
+    self.coordinatorPlan = coordinatorPlan
     self.reviewedAt = reviewedAt
   }
 
-  private enum CodingKeys: String, CodingKey { case id, provider, sourceDirectory, workspaceDirectory, taskID, startedAt, status, detail, appliedAt, revertedAt, coordinatorIssueID, reviewedAt }
+  private enum CodingKeys: String, CodingKey { case id, provider, sourceDirectory, workspaceDirectory, taskID, startedAt, status, detail, appliedAt, revertedAt, coordinatorIssueID, coordinatorPlan, reviewedAt }
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
@@ -1126,6 +1144,7 @@ private struct VibeBuildRun: Identifiable, Codable, Equatable {
       appliedAt: try values.decodeIfPresent(Date.self, forKey: .appliedAt),
       revertedAt: try values.decodeIfPresent(Date.self, forKey: .revertedAt),
       coordinatorIssueID: try values.decodeIfPresent(UUID.self, forKey: .coordinatorIssueID),
+      coordinatorPlan: try values.decodeIfPresent(VibeCoordinatorPlan.self, forKey: .coordinatorPlan),
       reviewedAt: try values.decodeIfPresent(Date.self, forKey: .reviewedAt))
   }
 }
@@ -7304,6 +7323,8 @@ private struct VibeProjectEditor: View {
   @State private var hasIssueDueDate = false
   @State private var issueDueDate = Date()
   @State private var selectedCoordinatorIssueID: UUID?
+  @State private var coordinatorPlanSummary = ""
+  @State private var coordinatorPlanTargets = ""
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -7589,8 +7610,95 @@ private struct VibeProjectEditor: View {
     }
   }
 
+  private func coordinatorPlan(for issueID: UUID) -> VibeCoordinatorPlan? {
+    project.coordinatorPlans.first { $0.issueID == issueID }
+  }
+
+  private func targetPaths(from text: String) -> [String] {
+    lines(from: text).map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "\\", with: "/")
+        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }.filter { !$0.isEmpty }
+  }
+
+  private func targetPathsOverlap(_ lhs: String, _ rhs: String) -> Bool {
+    let left = lhs.lowercased()
+    let right = rhs.lowercased()
+    let broadTerms: Set<String> = ["*", ".", "all", "any", "entire repo", "全体", "すべて"]
+    if broadTerms.contains(left) || broadTerms.contains(right) { return true }
+    return left == right || left.hasPrefix(right + "/") || right.hasPrefix(left + "/")
+  }
+
+  private func plansConflict(_ lhs: VibeCoordinatorPlan, _ rhs: VibeCoordinatorPlan) -> Bool {
+    lhs.targetPaths.contains { left in rhs.targetPaths.contains { targetPathsOverlap(left, $0) } }
+  }
+
+  private func conflictsWithActiveLanes(for plan: VibeCoordinatorPlan) -> [VibeBuildRun] {
+    coordinatorActiveRuns.filter { run in
+      guard let activePlan = run.coordinatorPlan else { return false }
+      return plansConflict(plan, activePlan)
+    }
+  }
+
+  private func loadCoordinatorPlan(for issueID: UUID?) {
+    guard let issueID, let plan = coordinatorPlan(for: issueID) else {
+      coordinatorPlanSummary = ""
+      coordinatorPlanTargets = ""
+      return
+    }
+    coordinatorPlanSummary = plan.summary
+    coordinatorPlanTargets = plan.targetPaths.joined(separator: "\n")
+  }
+
+  private func saveCoordinatorPlan(for issue: VibeProjectIssue) {
+    let summary = coordinatorPlanSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+    let paths = targetPaths(from: coordinatorPlanTargets)
+    guard !summary.isEmpty, !paths.isEmpty else { return }
+    if let index = project.coordinatorPlans.firstIndex(where: { $0.issueID == issue.id }) {
+      project.coordinatorPlans[index].summary = summary
+      project.coordinatorPlans[index].targetPaths = paths
+      project.coordinatorPlans[index].updatedAt = Date()
+    } else {
+      project.coordinatorPlans.append(VibeCoordinatorPlan(issueID: issue.id, summary: summary, targetPaths: paths))
+    }
+    recordMemory(kind: "coordinator", detail: english ? "Saved a coordination plan for \(issue.title)." : "「\(issue.title)」の調整計画を保存しました。")
+    saveProjectMemory()
+  }
+
+  private func planConflictMessage(for issue: VibeProjectIssue) -> String? {
+    guard let plan = coordinatorPlan(for: issue.id), plan.isReady else {
+      return english ? "Save a change plan and target paths before delegating." : "委任する前に、作業計画と変更対象のパスを保存してください。"
+    }
+    if project.coordinatorPolicy.executionMode == .independentParallel,
+      coordinatorActiveRuns.contains(where: { $0.coordinatorPlan == nil })
+    {
+      return english
+        ? "An active lane has no saved target-path plan. Wait for its review before starting another parallel lane."
+        : "実行中レーンに変更対象の計画がありません。確認が終わるまで、新しい並列レーンは開始できません。"
+    }
+    let conflicts = conflictsWithActiveLanes(for: plan)
+    guard !conflicts.isEmpty else { return nil }
+    let titles = conflicts.compactMap { run in
+      run.coordinatorIssueID.flatMap { id in project.issues.first { $0.id == id }?.title }
+    }
+    let items = titles.isEmpty ? (english ? "an active lane" : "実行中のレーン") : titles.joined(separator: english ? ", " : "、")
+    return english
+      ? "Overlapping target paths with \(items). Run this item after that lane is reviewed."
+      : "\(items) と変更対象が重なります。先行レーンの確認後に逐次実行してください。"
+  }
+
+  private func plannedConflictIssues(for issue: VibeProjectIssue) -> [VibeProjectIssue] {
+    guard let plan = coordinatorPlan(for: issue.id) else { return [] }
+    return project.readyIssues.filter { candidate in
+      candidate.id != issue.id
+        && coordinatorPlan(for: candidate.id).map { plansConflict(plan, $0) } == true
+    }
+  }
+
   private func canDelegateCoordinatorIssue(_ issue: VibeProjectIssue) -> Bool {
     guard !preparingBuild else { return false }
+    guard planConflictMessage(for: issue) == nil else { return false }
     if project.coordinatorPolicy.requiresHumanReview && !coordinatorReviewWaitingRuns.isEmpty {
       return false
     }
@@ -7656,12 +7764,55 @@ private struct VibeProjectEditor: View {
             .font(.caption).foregroundStyle(.secondary)
         } else {
           Picker(english ? "Next coordinated item" : "次に委任する課題", selection: Binding(
-            get: { selectedID }, set: { selectedCoordinatorIssueID = $0 })) {
+            get: { selectedID }, set: {
+              selectedCoordinatorIssueID = $0
+              loadCoordinatorPlan(for: $0)
+            })) {
             ForEach(ready) { issue in
               Text(issue.summary(english: english)).tag(Optional(issue.id))
             }
           }
           .pickerStyle(.menu)
+          .onAppear {
+            if selectedCoordinatorIssueID == nil, let selected {
+              selectedCoordinatorIssueID = selected.id
+              loadCoordinatorPlan(for: selected.id)
+            }
+          }
+          if let selected {
+            VStack(alignment: .leading, spacing: 6) {
+              Text(english ? "Change plan for this item" : "この課題の変更計画")
+                .font(.caption.bold()).foregroundStyle(.secondary)
+              TextField(english ? "What will this lane change?" : "このレーンで何を変更するか", text: $coordinatorPlanSummary)
+                .textFieldStyle(.roundedBorder)
+              labeledEditor(
+                english ? "Target files or folders — one per line" : "変更対象のファイル／フォルダ — 1行に1つ",
+                english ? "Sources/App/FeatureView.swift\nSources/App/FeatureStore.swift" : "Sources/App/FeatureView.swift\nSources/App/FeatureStore.swift",
+                text: $coordinatorPlanTargets, minHeight: 54)
+              HStack {
+                Button(english ? "Save plan" : "計画を保存", systemImage: "checklist") {
+                  saveCoordinatorPlan(for: selected)
+                }
+                .disabled(coordinatorPlanSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || targetPaths(from: coordinatorPlanTargets).isEmpty)
+                if let message = planConflictMessage(for: selected) {
+                  Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2).foregroundStyle(.orange)
+                }
+              }
+              let plannedConflicts = plannedConflictIssues(for: selected)
+              if !plannedConflicts.isEmpty {
+                Label(
+                  english
+                    ? "Potential overlap with: \(plannedConflicts.map(\.title).joined(separator: ", ")). Delegate these sequentially."
+                    : "変更対象が重なる候補: \(plannedConflicts.map(\.title).joined(separator: "、"))。逐次実行してください。",
+                  systemImage: "arrow.triangle.branch")
+                  .font(.caption2).foregroundStyle(.orange)
+              }
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+          }
           if project.coordinatorPolicy.executionMode == .independentParallel {
             VStack(alignment: .leading, spacing: 3) {
               Text(english ? "Suggested lanes" : "レーン候補")
@@ -8520,7 +8671,7 @@ private struct VibeProjectEditor: View {
   @MainActor private func startGuidedBuild(for coordinatorIssue: VibeProjectIssue? = nil) async {
     guard let proposal, proposal.status == .approved else { return }
     if let coordinatorIssue, !canDelegateCoordinatorIssue(coordinatorIssue) {
-      buildMessage = coordinatorPolicyMessage
+      buildMessage = planConflictMessage(for: coordinatorIssue) ?? coordinatorPolicyMessage
       return
     }
     preparingBuild = true
@@ -8531,8 +8682,9 @@ private struct VibeProjectEditor: View {
       project.completionCriteria = lines(from: completionLines)
       project.validationSteps = lines(from: validationLines)
       project.proposal = proposal
+      let coordinatorPlan = coordinatorIssue.flatMap { coordinatorPlan(for: $0.id) }
       let workspace = try VibeBuildWorkspace.prepare(sourceDirectory: sourceDirectory, projectID: project.id)
-      let prompt = guidedBuildPrompt(proposal: proposal, workspace: workspace, coordinatorIssue: coordinatorIssue)
+      let prompt = guidedBuildPrompt(proposal: proposal, workspace: workspace, coordinatorIssue: coordinatorIssue, coordinatorPlan: coordinatorPlan)
       var request = URLRequest(url: OnigiriEndpoint.url("agents/tasks"))
       request.httpMethod = "POST"
       request.timeoutInterval = 15
@@ -8549,7 +8701,7 @@ private struct VibeProjectEditor: View {
       project.buildRuns.insert(VibeBuildRun(
         provider: buildProvider, sourceDirectory: sourceDirectory, workspaceDirectory: workspace,
         taskID: task.id, status: "実行中", detail: "\(buildProvider.name)が隔離環境で実装しています。",
-        coordinatorIssueID: coordinatorIssue?.id), at: 0)
+        coordinatorIssueID: coordinatorIssue?.id, coordinatorPlan: coordinatorPlan), at: 0)
       project.status = .active
       recordMemory(
         kind: "build",
@@ -8649,7 +8801,7 @@ private struct VibeProjectEditor: View {
         provider: run.provider, sourceDirectory: run.sourceDirectory,
         workspaceDirectory: run.workspaceDirectory, taskID: task.id, status: english ? "Running" : "実行中",
         detail: english ? "Retrying in the same isolated workspace." : "同じ隔離環境で再試行しています。",
-        coordinatorIssueID: run.coordinatorIssueID), at: 0)
+        coordinatorIssueID: run.coordinatorIssueID, coordinatorPlan: run.coordinatorPlan), at: 0)
       selectedBuildRunID = project.buildRuns.first?.id
       recordMemory(
         kind: "build",
@@ -8724,7 +8876,7 @@ private struct VibeProjectEditor: View {
     return try JSONDecoder().decode(CodexTaskListResponse.self, from: data).tasks.first { $0.id == id }
   }
 
-  private func guidedBuildPrompt(proposal: VibeBuildProposal, workspace: String, coordinatorIssue: VibeProjectIssue? = nil) -> String {
+  private func guidedBuildPrompt(proposal: VibeBuildProposal, workspace: String, coordinatorIssue: VibeProjectIssue? = nil, coordinatorPlan: VibeCoordinatorPlan? = nil) -> String {
     let features = proposal.screenPlan.map { "- \($0)" }.joined(separator: "\n")
     let checks = proposal.dataPlan.map { "- \($0)" }.joined(separator: "\n")
     let validation = project.validationSteps.isEmpty
@@ -8732,7 +8884,10 @@ private struct VibeProjectEditor: View {
       : project.validationSteps.map { "- \($0)" }.joined(separator: "\n")
     let explicitMemory = explicitMemoryForBuildPrompt()
     let coordinatorTask = coordinatorIssue.map {
-      "\nCoordinator-assigned task:\nFocus this build on: \($0.title)\nType: \($0.kind.title(english: true)) · Priority: \($0.priority.title(english: true))\nDo not begin dependent work beyond what is necessary for this task."
+      let plan = coordinatorPlan.map {
+        "\nApproved change plan: \($0.summary)\nOnly modify these target paths unless a minimal supporting change is necessary:\n\($0.targetPaths.map { "- \($0)" }.joined(separator: "\n"))"
+      } ?? ""
+      return "\nCoordinator-assigned task:\nFocus this build on: \($0.title)\nType: \($0.kind.title(english: true)) · Priority: \($0.priority.title(english: true))\(plan)\nDo not begin dependent work beyond what is necessary for this task."
     } ?? ""
     return """
     Work only inside the assigned workspace: \(workspace)
