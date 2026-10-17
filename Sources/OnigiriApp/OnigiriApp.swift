@@ -4530,9 +4530,11 @@ struct ChatView: View {
 
   private var knowledgeSettings: some View {
     VStack(alignment: .leading, spacing: 8) {
+      workspaceNavigation
+
       HStack(spacing: 8) {
-        workspaceNavigation
         resumeMenu
+        Spacer()
       }
 
       HStack(spacing: 8) {
@@ -4550,33 +4552,15 @@ struct ChatView: View {
   }
 
   private var resumeMenu: some View {
-    Menu {
-      if workspaceActivityStore.entries.isEmpty {
-        Text(isEnglishUI ? "No recent activity" : "最近の作業はありません")
-      } else {
-        if !workspaceActivityStore.pinnedEntries.isEmpty {
-          Text(isEnglishUI ? "Pinned" : "固定")
-          ForEach(workspaceActivityStore.pinnedEntries.prefix(6)) { entry in
-            resumeMenuButton(entry, pinned: true)
-          }
-          Divider()
-        }
-        Text(isEnglishUI ? "Recent" : "最近")
-        ForEach(workspaceActivityStore.recentEntries.prefix(8)) { entry in
-          resumeMenuButton(entry, pinned: false)
-        }
-        Divider()
-        Button(isEnglishUI ? "Manage activity" : "履歴を管理") { showingWorkspaceActivity = true }
-        Button(isEnglishUI ? "Clear history" : "履歴を消去", role: .destructive) {
-          workspaceActivityStore.clear()
-        }
-      }
+    Button {
+      showingWorkspaceActivity = true
     } label: {
       Label(isEnglishUI ? "Resume" : "再開", systemImage: "clock.arrow.circlepath")
     }
-    .menuStyle(.borderlessButton)
+    .buttonStyle(.bordered)
+    .controlSize(.small)
     .fixedSize()
-    .help(isEnglishUI ? "Resume recent workspace activity" : "最近のワークスペース作業を再開")
+    .help(isEnglishUI ? "Resume or manage workspace activity" : "最近のワークスペース作業を再開・管理")
   }
 
   private func resumeMenuButton(_ entry: WorkspaceActivity, pinned: Bool) -> some View {
