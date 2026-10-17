@@ -116,6 +116,7 @@ private struct WorkspaceSettingsView: View {
   @AppStorage("onigiri.restoreLastWorkspace") private var restoresLastWorkspace = true
   @AppStorage("onigiri.defaultWorkspace") private var defaultWorkspaceRaw = OnigiriWorkspace.chat.rawValue
   @AppStorage("onigiri.hasCompletedOnboarding") private var hasCompletedOnboarding = false
+  @AppStorage("onigiri.favoriteQuickActions") private var favoriteQuickActionsRaw = OnigiriQuickAction.defaultRawValue
 
   private var english: Bool { (AppLanguage(rawValue: languageCode) ?? .japanese) == .english }
 
@@ -136,6 +137,15 @@ private struct WorkspaceSettingsView: View {
           .foregroundStyle(.secondary)
       }
 
+      Section(english ? "Favorite actions" : "お気に入り操作") {
+        Text(english ? "Choose the actions shown at the top of Chat. You can change these at any time." : "チャット上部に表示する操作を選びます。いつでも変更できます。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        ForEach(OnigiriQuickAction.allCases) { action in
+          Toggle(action.title(english: english), isOn: favoriteBinding(for: action))
+        }
+      }
+
       Section(english ? "Guided onboarding" : "開始ガイド") {
         Text(english ? "The guide introduces model setup, knowledge, and project building." : "モデル設定、資料、プロジェクト制作への最初の入口を表示します。")
           .font(.caption)
@@ -147,6 +157,20 @@ private struct WorkspaceSettingsView: View {
     }
     .formStyle(.grouped)
     .padding(12)
+  }
+
+  private func favoriteBinding(for action: OnigiriQuickAction) -> Binding<Bool> {
+    Binding(
+      get: { favoriteQuickActions.contains(action) },
+      set: { enabled in
+        var values = favoriteQuickActions
+        if enabled { values.insert(action) } else { values.remove(action) }
+        favoriteQuickActionsRaw = OnigiriQuickAction.rawValue(for: values)
+      })
+  }
+
+  private var favoriteQuickActions: Set<OnigiriQuickAction> {
+    OnigiriQuickAction.values(from: favoriteQuickActionsRaw)
   }
 }
 
@@ -2176,6 +2200,43 @@ private enum OnigiriWorkspace: String, CaseIterable, Identifiable, Codable {
   }
 }
 
+private enum OnigiriQuickAction: String, CaseIterable, Identifiable, Hashable {
+  case addKnowledge, openProjects, startAITask, webResearch, evidenceReplay, feedback
+
+  var id: String { rawValue }
+  static let defaultRawValue = "addKnowledge,openProjects,webResearch"
+
+  static func values(from rawValue: String) -> Set<OnigiriQuickAction> {
+    Set(rawValue.split(separator: ",").compactMap { OnigiriQuickAction(rawValue: String($0)) })
+  }
+
+  static func rawValue(for values: Set<OnigiriQuickAction>) -> String {
+    allCases.filter { values.contains($0) }.map(\.rawValue).joined(separator: ",")
+  }
+
+  func title(english: Bool) -> String {
+    switch self {
+    case .addKnowledge: return english ? "Add documents" : "資料を追加"
+    case .openProjects: return english ? "Projects" : "プロジェクト"
+    case .startAITask: return english ? "AI task" : "AIタスク"
+    case .webResearch: return english ? "Web research" : "Webリサーチ"
+    case .evidenceReplay: return english ? "Evidence & replay" : "根拠・再現"
+    case .feedback: return english ? "Feedback" : "改善メモ"
+    }
+  }
+
+  var symbol: String {
+    switch self {
+    case .addKnowledge: return "doc.badge.plus"
+    case .openProjects: return "target"
+    case .startAITask: return "terminal"
+    case .webResearch: return "safari"
+    case .evidenceReplay: return "arrow.triangle.2.circlepath.doc.on.clipboard"
+    case .feedback: return "text.bubble"
+    }
+  }
+}
+
 private func copyToPasteboard(_ text: String) {
   NSPasteboard.general.clearContents()
   NSPasteboard.general.setString(text, forType: .string)
@@ -2265,6 +2326,7 @@ struct ChatView: View {
   @AppStorage("onigiri.restoreLastWorkspace") private var restoresLastWorkspace = true
   @AppStorage("onigiri.defaultWorkspace") private var defaultWorkspaceRaw = OnigiriWorkspace.chat.rawValue
   @AppStorage("onigiri.hasCompletedOnboarding") private var hasCompletedOnboarding = false
+  @AppStorage("onigiri.favoriteQuickActions") private var favoriteQuickActionsRaw = OnigiriQuickAction.defaultRawValue
   private let webResearchSecretStore = KeychainSecretStore()
 
   private var selectedConversation: StoredConversation? {
@@ -2687,6 +2749,10 @@ struct ChatView: View {
 
       if selectedWorkspace == .chat && (!hasCompletedOnboarding || showingOnboardingManually) {
         onboardingCard
+      }
+
+      if selectedWorkspace == .chat {
+        contextualShortcutShelf
       }
 
       ScrollViewReader { proxy in
@@ -4243,6 +4309,79 @@ struct ChatView: View {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return "新しい会話" }
     return String(trimmed.prefix(28))
+  }
+
+  private var favoriteQuickActions: [OnigiriQuickAction] {
+    OnigiriQuickAction.allCases.filter { OnigiriQuickAction.values(from: favoriteQuickActionsRaw).contains($0) }
+  }
+
+  private var contextualQuickActions: [OnigiriQuickAction] {
+    var actions: [OnigiriQuickAction] = []
+    if knowledgeStatus.chunkCount == 0 { actions.append(.addKnowledge) }
+    if selectedChatProject != nil { actions.append(.openProjects) }
+    if messages.contains(where: { $0.role == .assistant && $0.evidence != nil }) { actions.append(.evidenceReplay) }
+    if actions.isEmpty && messages.isEmpty { actions.append(.webResearch) }
+    return actions.filter { !favoriteQuickActions.contains($0) }
+  }
+
+  @ViewBuilder private var contextualShortcutShelf: some View {
+    let favorite = favoriteQuickActions
+    let contextual = contextualQuickActions
+    if !favorite.isEmpty || !contextual.isEmpty {
+      VStack(alignment: .leading, spacing: 6) {
+        if !favorite.isEmpty {
+          Text(isEnglishUI ? "Favorites" : "お気に入り")
+            .font(.caption.bold())
+            .foregroundStyle(.secondary)
+          quickActionButtons(favorite)
+        }
+        if !contextual.isEmpty {
+          Text(isEnglishUI ? "Useful now" : "今できること")
+            .font(.caption.bold())
+            .foregroundStyle(.secondary)
+          quickActionButtons(contextual)
+        }
+      }
+      .padding(.vertical, 2)
+    }
+  }
+
+  private func quickActionButtons(_ actions: [OnigiriQuickAction]) -> some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 8) {
+        ForEach(actions) { action in
+          Button(action.title(english: isEnglishUI), systemImage: action.symbol) {
+            performQuickAction(action)
+          }
+          .controlSize(.small)
+        }
+      }
+      .buttonStyle(.bordered)
+    }
+  }
+
+  private func performQuickAction(_ action: OnigiriQuickAction) {
+    switch action {
+    case .addKnowledge:
+      selectedWorkspace = .knowledge
+      showingKnowledgeImporter = true
+    case .openProjects:
+      selectedWorkspace = .build
+      showingVibeProjects = true
+    case .startAITask:
+      selectedWorkspace = .build
+      showingCodexTasks = true
+      Task { await loadCodexTasks() }
+    case .webResearch:
+      selectedWorkspace = .explore
+      showingWebResearch = true
+    case .evidenceReplay:
+      selectedWorkspace = .explore
+      showingEvidenceReplay = true
+    case .feedback:
+      selectedWorkspace = .data
+      showingExperienceFeedback = true
+    }
   }
 
   private var onboardingCard: some View {

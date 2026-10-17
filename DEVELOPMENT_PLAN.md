@@ -134,6 +134,7 @@ flowchart LR
 | 2.49 — UI Visual Acceptance & Responsive Refinement | 実装済み | ワークスペースと制作ステージを画面幅に応じてセグメント／メニューへ切替。知識操作の折返し、アクセシビリティラベル、目視受入手順を追加 |
 | 2.50 — Interaction Polish & User Feedback Loop | 実装済み | ⌘1〜⌘5によるワークスペース切替、最後に開いた領域の復元、ローカル改善メモの保存・削除・Markdown書出しを追加 |
 | 2.51 — Workspace Personalization & Guided Onboarding | 実装済み | 起動時の既定／前回ワークスペース設定、モデル・資料・プロジェクト制作へ導く開始ガイド、ガイドの任意再表示を追加 |
+| 2.52 — Workspace Favorites & Contextual Shortcuts | 実装済み | お気に入り操作を設定から選択し、資料未登録・根拠付き回答・プロジェクト紐付けなど現在の状態に応じた次の操作をチャットへ表示 |
 
 完了条件:
 
