@@ -131,6 +131,7 @@ flowchart LR
 | 2.46 — Coordinator Release Comparison & Rollback Guide | 実装済み | 2つのリリース時点の適用レーン・統合確認を比較し、新規レーンから安全な個別パッチ確認とロールバックへ案内 |
 | 2.47 — Coordinator Incident Notes & Recovery Plan | 任意・保留 | リリース後の問題をリリース・レーン・検証結果と関連付け、復旧手順と再リリース条件を記録 |
 | 2.48 — UI Architecture & Navigation Cleanup | 実装済み | チャットを5つの目的別ワークスペースへ整理し、知識・制作・調査・設定の操作を必要な場面だけ表示。プロジェクト制作は定義、計画、実装、確認、完成の進行型画面へ再編 |
+| 2.49 — UI Visual Acceptance & Responsive Refinement | 実装済み | ワークスペースと制作ステージを画面幅に応じてセグメント／メニューへ切替。知識操作の折返し、アクセシビリティラベル、目視受入手順を追加 |
 
 完了条件:
 

@@ -4113,13 +4113,7 @@ struct ChatView: View {
 
   private var knowledgeSettings: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Picker("ワークスペース", selection: $selectedWorkspace) {
-        ForEach(OnigiriWorkspace.allCases) { workspace in
-          Label(workspace.title(english: isEnglishUI), systemImage: workspace.symbol).tag(workspace)
-        }
-      }
-      .pickerStyle(.segmented)
-      .labelsHidden()
+      workspaceNavigation
 
       HStack(spacing: 8) {
         Label(knowledgeStatusLabel, systemImage: "doc.text.magnifyingglass")
@@ -4133,6 +4127,36 @@ struct ChatView: View {
 
       workspaceControls
     }
+  }
+
+  private var workspaceNavigation: some View {
+    GeometryReader { proxy in
+      if proxy.size.width >= 700 {
+        Picker(isEnglishUI ? "Workspace" : "ワークスペース", selection: $selectedWorkspace) {
+          ForEach(OnigiriWorkspace.allCases) { workspace in
+            Label(workspace.title(english: isEnglishUI), systemImage: workspace.symbol).tag(workspace)
+          }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .accessibilityLabel(isEnglishUI ? "Workspace" : "ワークスペース")
+      } else {
+        Menu {
+          ForEach(OnigiriWorkspace.allCases) { workspace in
+            Button {
+              selectedWorkspace = workspace
+            } label: {
+              Label(workspace.title(english: isEnglishUI), systemImage: workspace == selectedWorkspace ? "checkmark" : workspace.symbol)
+            }
+          }
+        } label: {
+          Label(selectedWorkspace.title(english: isEnglishUI), systemImage: selectedWorkspace.symbol)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityLabel(isEnglishUI ? "Choose workspace" : "ワークスペースを選択")
+      }
+    }
+    .frame(height: 28)
   }
 
   private var isEnglishUI: Bool {
@@ -4149,29 +4173,63 @@ struct ChatView: View {
     }
   }
 
+  @ViewBuilder private func knowledgePrimaryControls(horizontal: Bool) -> some View {
+    if horizontal {
+      HStack(spacing: 8) {
+        knowledgeSearchField
+        knowledgeSearchButton
+        knowledgeImportButton
+        knowledgeDocumentsButton
+      }
+    } else {
+      VStack(alignment: .leading, spacing: 6) {
+        knowledgeSearchField
+        HStack(spacing: 8) {
+          knowledgeSearchButton
+          knowledgeImportButton
+          knowledgeDocumentsButton
+        }
+      }
+    }
+  }
+
+  private var knowledgeSearchField: some View {
+    TextField(isEnglishUI ? "Search knowledge" : "RAG検索", text: $quickKnowledgeSearchQuery)
+      .textFieldStyle(.roundedBorder)
+      .onSubmit { Task { await searchKnowledgeFromToolbar() } }
+      .disabled(busy || knowledgeStatus.chunkCount == 0)
+  }
+
+  private var knowledgeSearchButton: some View {
+    Button(isEnglishUI ? "Search" : "検索", systemImage: "magnifyingglass") {
+      Task { await searchKnowledgeFromToolbar() }
+    }
+    .disabled(busy || knowledgeStatus.chunkCount == 0)
+  }
+
+  private var knowledgeImportButton: some View {
+    Button(isEnglishUI ? "Add documents" : "資料追加", systemImage: "doc.badge.plus") {
+      showingKnowledgeImporter = true
+    }
+    .disabled(busy)
+  }
+
+  private var knowledgeDocumentsButton: some View {
+    Button(isEnglishUI ? "Documents" : "資料一覧", systemImage: "list.bullet.rectangle") {
+      Task { await loadKnowledgeDocuments(); showingKnowledgeDocuments = true }
+    }
+    .disabled(busy || knowledgeStatus.documentCount == 0)
+  }
+
   @ViewBuilder private var workspaceControls: some View {
     switch selectedWorkspace {
     case .chat:
       EmptyView()
     case .knowledge:
       VStack(alignment: .leading, spacing: 8) {
-        HStack(spacing: 8) {
-          TextField(isEnglishUI ? "Search knowledge" : "RAG検索", text: $quickKnowledgeSearchQuery)
-            .textFieldStyle(.roundedBorder)
-            .onSubmit { Task { await searchKnowledgeFromToolbar() } }
-            .disabled(busy || knowledgeStatus.chunkCount == 0)
-          Button(isEnglishUI ? "Search" : "検索", systemImage: "magnifyingglass") {
-            Task { await searchKnowledgeFromToolbar() }
-          }
-          .disabled(busy || knowledgeStatus.chunkCount == 0)
-          Button(isEnglishUI ? "Add documents" : "資料追加", systemImage: "doc.badge.plus") {
-            showingKnowledgeImporter = true
-          }
-          .disabled(busy)
-          Button(isEnglishUI ? "Documents" : "資料一覧", systemImage: "list.bullet.rectangle") {
-            Task { await loadKnowledgeDocuments(); showingKnowledgeDocuments = true }
-          }
-          .disabled(busy || knowledgeStatus.documentCount == 0)
+        ViewThatFits(in: .horizontal) {
+          knowledgePrimaryControls(horizontal: true)
+          knowledgePrimaryControls(horizontal: false)
         }
         HStack(spacing: 8) {
           Button(isEnglishUI ? "Related chunks" : "関連チャンク", systemImage: "quote.bubble") { Task { await searchKnowledgeForCurrentText() } }
@@ -7595,13 +7653,33 @@ private struct VibeProjectEditor: View {
 
   private var projectStagePicker: some View {
     VStack(alignment: .leading, spacing: 5) {
-      Picker(english ? "Build stage" : "制作ステージ", selection: $selectedProjectStage) {
-        ForEach(VibeProjectStage.allCases) { stage in
-          Text(stage.title(english: english)).tag(stage)
+      GeometryReader { proxy in
+        if proxy.size.width >= 640 {
+          Picker(english ? "Build stage" : "制作ステージ", selection: $selectedProjectStage) {
+            ForEach(VibeProjectStage.allCases) { stage in
+              Text(stage.title(english: english)).tag(stage)
+            }
+          }
+          .pickerStyle(.segmented)
+          .labelsHidden()
+          .accessibilityLabel(english ? "Build stage" : "制作ステージ")
+        } else {
+          Menu {
+            ForEach(VibeProjectStage.allCases) { stage in
+              Button {
+                selectedProjectStage = stage
+              } label: {
+                Label(stage.title(english: english), systemImage: stage == selectedProjectStage ? "checkmark" : "circle")
+              }
+            }
+          } label: {
+            Label(selectedProjectStage.title(english: english), systemImage: "list.number")
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+          .accessibilityLabel(english ? "Choose build stage" : "制作ステージを選択")
         }
       }
-      .pickerStyle(.segmented)
-      .labelsHidden()
+      .frame(height: 28)
       Text(selectedProjectStage.summary(english: english))
         .font(.caption)
         .foregroundStyle(.secondary)
