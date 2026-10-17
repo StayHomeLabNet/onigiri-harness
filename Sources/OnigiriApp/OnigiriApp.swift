@@ -22,6 +22,7 @@ private extension String {
 
 private extension Notification.Name {
   static let ensureOnigiriServer = Notification.Name("OnigiriHarness.ensureServer")
+  static let selectOnigiriWorkspace = Notification.Name("OnigiriHarness.selectWorkspace")
 }
 
 private enum AppLanguage: String, CaseIterable, Identifiable {
@@ -61,6 +62,17 @@ struct OnigiriApp: App {
     Settings {
       OnigiriSettingsView()
         .environment(\.locale, language.locale)
+    }
+
+    .commands {
+      CommandMenu(language == .english ? "Workspace" : "ワークスペース") {
+        ForEach(Array(OnigiriWorkspace.allCases.enumerated()), id: \.element.id) { index, workspace in
+          Button(workspace.title(english: language == .english)) {
+            NotificationCenter.default.post(name: .selectOnigiriWorkspace, object: workspace)
+          }
+          .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: [.command])
+        }
+      }
     }
   }
 }
@@ -2044,7 +2056,60 @@ private struct KnowledgeImportFailure {
   let reason: String
 }
 
-private enum OnigiriWorkspace: String, CaseIterable, Identifiable {
+private struct UIExperienceFeedback: Identifiable, Codable {
+  enum Rating: String, CaseIterable, Codable, Identifiable {
+    case positive, improvement
+    var id: String { rawValue }
+    func title(english: Bool) -> String {
+      switch self {
+      case .positive: return english ? "Worked well" : "よかった"
+      case .improvement: return english ? "Needs improvement" : "改善したい"
+      }
+    }
+  }
+
+  let id: UUID
+  let createdAt: Date
+  let workspace: OnigiriWorkspace
+  let rating: Rating
+  let note: String
+}
+
+@MainActor private final class UIExperienceFeedbackStore: ObservableObject {
+  static let shared = UIExperienceFeedbackStore()
+  @Published private(set) var entries: [UIExperienceFeedback] = []
+  private let key = "onigiri.uiExperienceFeedback"
+
+  private init() {
+    guard let data = UserDefaults.standard.data(forKey: key),
+          let entries = try? JSONDecoder().decode([UIExperienceFeedback].self, from: data) else { return }
+    self.entries = entries.sorted { $0.createdAt > $1.createdAt }
+  }
+
+  func add(workspace: OnigiriWorkspace, rating: UIExperienceFeedback.Rating, note: String) {
+    let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    entries.insert(UIExperienceFeedback(id: UUID(), createdAt: Date(), workspace: workspace, rating: rating, note: trimmed), at: 0)
+    entries = Array(entries.prefix(50))
+    persist()
+  }
+
+  func remove(_ entry: UIExperienceFeedback) {
+    entries.removeAll { $0.id == entry.id }
+    persist()
+  }
+
+  func clear() {
+    entries = []
+    UserDefaults.standard.removeObject(forKey: key)
+  }
+
+  private func persist() {
+    UserDefaults.standard.set(try? JSONEncoder().encode(entries), forKey: key)
+  }
+}
+
+private enum OnigiriWorkspace: String, CaseIterable, Identifiable, Codable {
   case chat, knowledge, build, explore, data
 
   var id: String { rawValue }
@@ -2113,6 +2178,7 @@ struct ChatView: View {
   @State private var knowledgeSearchQuery = ""
   @State private var quickKnowledgeSearchQuery = ""
   @State private var selectedWorkspace: OnigiriWorkspace = .chat
+  @State private var showingExperienceFeedback = false
   @State private var knowledgeButtonsScrollVisibility = KnowledgeButtonsScrollVisibility()
   @State private var selectedCitation: KnowledgeChunkMatch?
   @State private var showingKnowledgeImporter = false
@@ -2153,6 +2219,7 @@ struct ChatView: View {
   @AppStorage("onigiri.ragEvaluationSuiteID") private var selectedRAGEvaluationSuiteID = ""
   @AppStorage("onigiri.tavily.enabled") private var tavilyWebResearchEnabled = false
   @AppStorage("onigiri.uiLanguage") private var uiLanguageCode = AppLanguage.japanese.rawValue
+  @AppStorage("onigiri.lastWorkspace") private var lastWorkspaceRaw = OnigiriWorkspace.chat.rawValue
   private let webResearchSecretStore = KeychainSecretStore()
 
   private var selectedConversation: StoredConversation? {
@@ -2250,6 +2317,17 @@ struct ChatView: View {
       webResearchQueue.sources = []
       activateProfileForSelectedConversation()
     }
+    .onAppear {
+      selectedWorkspace = OnigiriWorkspace(rawValue: lastWorkspaceRaw) ?? .chat
+    }
+    .onChange(of: selectedWorkspace) { _, workspace in
+      lastWorkspaceRaw = workspace.rawValue
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .selectOnigiriWorkspace)) { notification in
+      if let workspace = notification.object as? OnigiriWorkspace {
+        selectedWorkspace = workspace
+      }
+    }
     .fileImporter(
       isPresented: $showingKnowledgeImporter,
       allowedContentTypes: [
@@ -2317,6 +2395,10 @@ struct ChatView: View {
     .sheet(isPresented: $showingDataManagement) {
       DataManagementView()
         .frame(minWidth: 620, minHeight: 460, alignment: .topLeading)
+    }
+    .sheet(isPresented: $showingExperienceFeedback) {
+      UIExperienceFeedbackView(initialWorkspace: selectedWorkspace, english: isEnglishUI)
+        .frame(minWidth: 600, minHeight: 480, alignment: .topLeading)
     }
     .sheet(isPresented: $showingKnowledgeDocuments) {
       KnowledgeDocumentsView(
@@ -4274,6 +4356,7 @@ struct ChatView: View {
       HStack(spacing: 8) {
         Button(isEnglishUI ? "Profiles" : "プロファイル", systemImage: "person.crop.circle") { showingProductProfiles = true }
         Button(isEnglishUI ? "Data management" : "データ管理", systemImage: "externaldrive.badge.timemachine") { showingDataManagement = true }
+        Button(isEnglishUI ? "Feedback" : "改善メモ", systemImage: "text.bubble") { showingExperienceFeedback = true }
       }
       .buttonStyle(.bordered)
       .controlSize(.small)
@@ -6670,6 +6753,100 @@ private struct MCPAuditView: View {
         try? await Task.sleep(for: .seconds(2))
       }
     }
+  }
+}
+
+private struct UIExperienceFeedbackView: View {
+  @Environment(\.dismiss) private var dismiss
+  @StateObject private var store = UIExperienceFeedbackStore.shared
+  @State private var workspace: OnigiriWorkspace
+  @State private var rating: UIExperienceFeedback.Rating = .improvement
+  @State private var note = ""
+  let english: Bool
+
+  init(initialWorkspace: OnigiriWorkspace, english: Bool) {
+    _workspace = State(initialValue: initialWorkspace)
+    self.english = english
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      SheetTitleBar(title: english ? "Experience feedback" : "使い心地メモ")
+      Text(english ? "Keep short, local notes about what worked and what should change. Nothing is sent automatically." : "よかった点や改善したい点を、このMacだけに短く記録します。自動送信はされません。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      HStack {
+        Picker(english ? "Workspace" : "対象", selection: $workspace) {
+          ForEach(OnigiriWorkspace.allCases) { item in Text(item.title(english: english)).tag(item) }
+        }
+        Picker(english ? "Type" : "種類", selection: $rating) {
+          ForEach(UIExperienceFeedback.Rating.allCases) { item in Text(item.title(english: english)).tag(item) }
+        }
+      }
+      TextEditor(text: $note)
+        .font(.body)
+        .frame(minHeight: 90)
+        .overlay(alignment: .topLeading) {
+          if note.isEmpty {
+            Text(english ? "For example: I could not find the review queue." : "例: レビュー待ちの操作を見つけられなかった。")
+              .foregroundStyle(.tertiary)
+              .padding(8)
+              .allowsHitTesting(false)
+          }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+      HStack {
+        Button(english ? "Save note" : "メモを保存", systemImage: "square.and.arrow.down") {
+          store.add(workspace: workspace, rating: rating, note: note)
+          note = ""
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        Spacer()
+        Button(english ? "Export Markdown" : "Markdownを書き出す", systemImage: "doc.richtext") { exportMarkdown() }
+          .disabled(store.entries.isEmpty)
+        Button(english ? "Clear all" : "すべて消去", systemImage: "trash", role: .destructive) { store.clear() }
+          .disabled(store.entries.isEmpty)
+      }
+      if store.entries.isEmpty {
+        ContentUnavailableView(english ? "No notes yet" : "メモはありません", systemImage: "text.bubble", description: Text(english ? "Use this space after trying a workflow." : "操作を試した後の気付きを記録できます。"))
+      } else {
+        List(store.entries) { entry in
+          VStack(alignment: .leading, spacing: 3) {
+            HStack {
+              Label(entry.workspace.title(english: english), systemImage: entry.workspace.symbol)
+              Spacer()
+              Text(entry.rating.title(english: english)).foregroundStyle(entry.rating == .positive ? .green : .orange)
+              Text(entry.createdAt, style: .date).foregroundStyle(.secondary)
+              Button(english ? "Delete" : "削除", systemImage: "trash", role: .destructive) { store.remove(entry) }
+                .labelStyle(.iconOnly)
+            }
+            Text(entry.note).textSelection(.enabled)
+          }
+          .font(.caption)
+        }
+      }
+      HStack { Spacer(); Button(english ? "Close" : "閉じる") { dismiss() } }
+    }
+    .padding(20)
+  }
+
+  private func exportMarkdown() {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "onigiri-ui-feedback.md"
+    panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    let lineBreak = String(UnicodeScalar(10)!)
+    let lines = store.entries.map { entry in
+      [
+        "## \(entry.workspace.title(english: english)) · \(entry.rating.title(english: english))",
+        "- \(entry.createdAt.formatted(date: .numeric, time: .shortened))",
+        entry.note,
+      ].joined(separator: lineBreak + lineBreak)
+    }
+    let title = english ? "Onigiri UI feedback" : "Onigiri 使い心地メモ"
+    let content = ["# \(title)", lines.joined(separator: lineBreak + lineBreak)].joined(separator: lineBreak + lineBreak)
+    try? content.write(to: url, atomically: true, encoding: .utf8)
   }
 }
 
