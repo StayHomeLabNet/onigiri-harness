@@ -82,10 +82,12 @@ private struct OnigiriSettingsView: View {
     TabView {
       LanguageSettingsView()
         .tabItem { Label("一般", systemImage: "gearshape") }
+      WorkspaceSettingsView()
+        .tabItem { Label("ワークスペース", systemImage: "rectangle.3.group") }
       WebResearchSettingsView()
         .tabItem { Label("Webリサーチ", systemImage: "globe") }
     }
-    .frame(width: 540, height: 420)
+    .frame(width: 540, height: 450)
   }
 }
 
@@ -105,6 +107,45 @@ private struct LanguageSettingsView: View {
     }
     .formStyle(.grouped)
     .frame(width: 420)
+    .padding(12)
+  }
+}
+
+private struct WorkspaceSettingsView: View {
+  @AppStorage("onigiri.uiLanguage") private var languageCode = AppLanguage.japanese.rawValue
+  @AppStorage("onigiri.restoreLastWorkspace") private var restoresLastWorkspace = true
+  @AppStorage("onigiri.defaultWorkspace") private var defaultWorkspaceRaw = OnigiriWorkspace.chat.rawValue
+  @AppStorage("onigiri.hasCompletedOnboarding") private var hasCompletedOnboarding = false
+
+  private var english: Bool { (AppLanguage(rawValue: languageCode) ?? .japanese) == .english }
+
+  var body: some View {
+    Form {
+      Section(english ? "Startup" : "起動時") {
+        Toggle(english ? "Reopen the last workspace" : "前回のワークスペースを開く", isOn: $restoresLastWorkspace)
+        Picker(english ? "Default workspace" : "既定のワークスペース", selection: $defaultWorkspaceRaw) {
+          ForEach(OnigiriWorkspace.allCases) { workspace in
+            Text(workspace.title(english: english)).tag(workspace.rawValue)
+          }
+        }
+        .disabled(restoresLastWorkspace)
+        Text(restoresLastWorkspace
+          ? (english ? "The last selected workspace opens when the app starts." : "アプリを開くと、最後に使っていたワークスペースを表示します。")
+          : (english ? "The selected workspace opens when the app starts." : "アプリを開くと、選択したワークスペースを表示します。"))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      Section(english ? "Guided onboarding" : "開始ガイド") {
+        Text(english ? "The guide introduces model setup, knowledge, and project building." : "モデル設定、資料、プロジェクト制作への最初の入口を表示します。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Button(english ? "Show the guide again" : "開始ガイドをもう一度表示") {
+          hasCompletedOnboarding = false
+        }
+      }
+    }
+    .formStyle(.grouped)
     .padding(12)
   }
 }
@@ -2179,6 +2220,7 @@ struct ChatView: View {
   @State private var quickKnowledgeSearchQuery = ""
   @State private var selectedWorkspace: OnigiriWorkspace = .chat
   @State private var showingExperienceFeedback = false
+  @State private var showingOnboardingManually = false
   @State private var knowledgeButtonsScrollVisibility = KnowledgeButtonsScrollVisibility()
   @State private var selectedCitation: KnowledgeChunkMatch?
   @State private var showingKnowledgeImporter = false
@@ -2220,6 +2262,9 @@ struct ChatView: View {
   @AppStorage("onigiri.tavily.enabled") private var tavilyWebResearchEnabled = false
   @AppStorage("onigiri.uiLanguage") private var uiLanguageCode = AppLanguage.japanese.rawValue
   @AppStorage("onigiri.lastWorkspace") private var lastWorkspaceRaw = OnigiriWorkspace.chat.rawValue
+  @AppStorage("onigiri.restoreLastWorkspace") private var restoresLastWorkspace = true
+  @AppStorage("onigiri.defaultWorkspace") private var defaultWorkspaceRaw = OnigiriWorkspace.chat.rawValue
+  @AppStorage("onigiri.hasCompletedOnboarding") private var hasCompletedOnboarding = false
   private let webResearchSecretStore = KeychainSecretStore()
 
   private var selectedConversation: StoredConversation? {
@@ -2318,7 +2363,10 @@ struct ChatView: View {
       activateProfileForSelectedConversation()
     }
     .onAppear {
-      selectedWorkspace = OnigiriWorkspace(rawValue: lastWorkspaceRaw) ?? .chat
+      let initialWorkspace = restoresLastWorkspace
+        ? OnigiriWorkspace(rawValue: lastWorkspaceRaw)
+        : OnigiriWorkspace(rawValue: defaultWorkspaceRaw)
+      selectedWorkspace = initialWorkspace ?? .chat
     }
     .onChange(of: selectedWorkspace) { _, workspace in
       lastWorkspaceRaw = workspace.rawValue
@@ -2636,6 +2684,10 @@ struct ChatView: View {
       Divider()
       knowledgeSettings
       Divider()
+
+      if selectedWorkspace == .chat && (!hasCompletedOnboarding || showingOnboardingManually) {
+        onboardingCard
+      }
 
       ScrollViewReader { proxy in
         ScrollView {
@@ -4193,6 +4245,53 @@ struct ChatView: View {
     return String(trimmed.prefix(28))
   }
 
+  private var onboardingCard: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack {
+        Label(isEnglishUI ? "Start here" : "最初にすること", systemImage: "sparkles")
+          .font(.headline)
+        Spacer()
+        Button(isEnglishUI ? "Close guide" : "ガイドを閉じる") {
+          hasCompletedOnboarding = true
+          showingOnboardingManually = false
+        }
+        .controlSize(.small)
+      }
+      Text(isEnglishUI
+        ? "Onigiri keeps chat, knowledge, and project building in separate workspaces. Start with the path you need today."
+        : "Onigiriでは会話、資料、プロジェクト制作を目的別に分けています。今日したいことから始められます。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      HStack(alignment: .top, spacing: 12) {
+        onboardingStep(number: 1, title: isEnglishUI ? "Check the model" : "モデルを確認", detail: isEnglishUI ? "Choose a provider and model above." : "上部でProviderとモデルを選びます。")
+        onboardingStep(number: 2, title: isEnglishUI ? "Add knowledge" : "資料を追加", detail: isEnglishUI ? "Import documents when you want grounded answers.": "資料に基づく回答が必要なときに追加します。") {
+          selectedWorkspace = .knowledge
+        }
+        onboardingStep(number: 3, title: isEnglishUI ? "Build a project" : "プロジェクトを制作", detail: isEnglishUI ? "Turn an idea into a plan before an AI builds it." : "AIに頼む前に、作りたいことを計画にします。") {
+          selectedWorkspace = .build
+        }
+      }
+    }
+    .padding(12)
+    .background(Color.accentColor.opacity(0.09))
+    .clipShape(RoundedRectangle(cornerRadius: 10))
+  }
+
+  @ViewBuilder private func onboardingStep(
+    number: Int, title: String, detail: String, action: (() -> Void)? = nil
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text("\(number)").font(.caption.bold()).foregroundStyle(Color.accentColor)
+      Text(title).font(.caption.bold())
+      Text(detail).font(.caption2).foregroundStyle(.secondary)
+      if let action {
+        Button(isEnglishUI ? "Open" : "開く", action: action)
+          .controlSize(.mini)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
   private var knowledgeSettings: some View {
     VStack(alignment: .leading, spacing: 8) {
       workspaceNavigation
@@ -4356,6 +4455,7 @@ struct ChatView: View {
       HStack(spacing: 8) {
         Button(isEnglishUI ? "Profiles" : "プロファイル", systemImage: "person.crop.circle") { showingProductProfiles = true }
         Button(isEnglishUI ? "Data management" : "データ管理", systemImage: "externaldrive.badge.timemachine") { showingDataManagement = true }
+        Button(isEnglishUI ? "Getting started" : "開始ガイド", systemImage: "sparkles") { showingOnboardingManually = true; selectedWorkspace = .chat }
         Button(isEnglishUI ? "Feedback" : "改善メモ", systemImage: "text.bubble") { showingExperienceFeedback = true }
       }
       .buttonStyle(.bordered)
