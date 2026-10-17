@@ -886,6 +886,21 @@ private struct VibeCoordinatorPlan: Identifiable, Codable, Equatable {
   }
 }
 
+private struct VibeIntegrationValidationCheck: Identifiable, Codable, Equatable {
+  var id: UUID = UUID()
+  var title: String
+  var outcome: VibeValidationOutcome?
+  var evidence: String = ""
+  var updatedAt: Date?
+}
+
+private struct VibeIntegrationValidation: Identifiable, Codable, Equatable {
+  var id: UUID = UUID()
+  var createdAt: Date = Date()
+  var appliedRunIDs: [UUID]
+  var checks: [VibeIntegrationValidationCheck]
+}
+
 private struct VibeProject: Identifiable, Codable, Equatable {
   var archived: Bool = false
   var id: UUID
@@ -907,6 +922,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var explicitMemory: VibeExplicitProjectMemory
   var coordinatorPolicy: VibeCoordinatorPolicy
   var coordinatorPlans: [VibeCoordinatorPlan]
+  var integrationValidations: [VibeIntegrationValidation]
   var memory: [VibeProjectMemoryEntry]
   var createdAt: Date
   var updatedAt: Date
@@ -915,7 +931,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     id: UUID = UUID(), archived: Bool = false, title: String, goal: String, audience: String,
     essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], validationResults: [VibeValidationResult] = [], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
-    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(), coordinatorPolicy: VibeCoordinatorPolicy = VibeCoordinatorPolicy(), coordinatorPlans: [VibeCoordinatorPlan] = [],
+    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(), coordinatorPolicy: VibeCoordinatorPolicy = VibeCoordinatorPolicy(), coordinatorPlans: [VibeCoordinatorPlan] = [], integrationValidations: [VibeIntegrationValidation] = [],
     memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
   ) {
     self.id = id
@@ -938,6 +954,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     self.explicitMemory = explicitMemory
     self.coordinatorPolicy = coordinatorPolicy
     self.coordinatorPlans = coordinatorPlans
+    self.integrationValidations = integrationValidations
     self.memory = memory
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -945,7 +962,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, archived, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
-    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, coordinatorPolicy, coordinatorPlans, memory, createdAt, updatedAt
+    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, coordinatorPolicy, coordinatorPlans, integrationValidations, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
@@ -971,6 +988,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
       explicitMemory: try values.decodeIfPresent(VibeExplicitProjectMemory.self, forKey: .explicitMemory) ?? VibeExplicitProjectMemory(),
       coordinatorPolicy: try values.decodeIfPresent(VibeCoordinatorPolicy.self, forKey: .coordinatorPolicy) ?? VibeCoordinatorPolicy(),
       coordinatorPlans: try values.decodeIfPresent([VibeCoordinatorPlan].self, forKey: .coordinatorPlans) ?? [],
+      integrationValidations: try values.decodeIfPresent([VibeIntegrationValidation].self, forKey: .integrationValidations) ?? [],
       memory: try values.decodeIfPresent([VibeProjectMemoryEntry].self, forKey: .memory) ?? [],
       createdAt: try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
       updatedAt: try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date())
@@ -7328,6 +7346,12 @@ private struct VibeProjectEditor: View {
   @State private var integrationFileSets: [UUID: [String]] = [:]
   @State private var integrationInspecting = false
   @State private var integrationMessage: String?
+  @State private var selectedIntegrationValidationID: UUID?
+  @State private var selectedIntegrationCheckID: UUID?
+  @State private var integrationValidationOutcome: VibeValidationOutcome = .passed
+  @State private var integrationValidationEvidence = ""
+  @State private var integrationValidationRunning = false
+  @State private var integrationValidationMessage: String?
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -7455,6 +7479,7 @@ private struct VibeProjectEditor: View {
         guidedBuildSection
         reviewSection
         integrationReviewSection
+        integrationValidationSection
         validationEvidenceSection
         completionReadinessSection
         handoffSection
@@ -7938,6 +7963,192 @@ private struct VibeProjectEditor: View {
     }
   }
 
+  private var appliedCoordinatorRuns: [VibeBuildRun] {
+    project.buildRuns.filter { $0.coordinatorIssueID != nil && $0.appliedAt != nil && $0.revertedAt == nil }
+  }
+
+  private var selectedIntegrationValidation: VibeIntegrationValidation? {
+    let id = selectedIntegrationValidationID ?? project.integrationValidations.first?.id
+    return project.integrationValidations.first { $0.id == id }
+  }
+
+  private var selectedIntegrationCheck: VibeIntegrationValidationCheck? {
+    guard let validation = selectedIntegrationValidation else { return nil }
+    let id = selectedIntegrationCheckID ?? validation.checks.first { $0.outcome == nil }?.id ?? validation.checks.first?.id
+    return validation.checks.first { $0.id == id }
+  }
+
+  private func beginIntegrationValidation() {
+    guard !appliedCoordinatorRuns.isEmpty else { return }
+    let titles = !project.validationSteps.isEmpty ? project.validationSteps
+      : (!project.completionCriteria.isEmpty ? project.completionCriteria
+        : [english ? "Check the integrated project" : "統合したプロジェクトを確認する"])
+    let validation = VibeIntegrationValidation(
+      appliedRunIDs: appliedCoordinatorRuns.compactMap(\.id),
+      checks: titles.map { VibeIntegrationValidationCheck(title: $0) })
+    project.integrationValidations.insert(validation, at: 0)
+    selectedIntegrationValidationID = validation.id
+    selectedIntegrationCheckID = validation.checks.first?.id
+    integrationValidationEvidence = ""
+    recordMemory(kind: "integration", detail: english
+      ? "Started integration validation after applying \(validation.appliedRunIDs.count) coordinated lane(s)."
+      : "\(validation.appliedRunIDs.count) 件のコーディネーター・レーン適用後に統合確認を開始しました。")
+    saveProjectMemory()
+  }
+
+  private func selectIntegrationCheck(_ id: UUID?) {
+    selectedIntegrationCheckID = id
+    guard let validation = selectedIntegrationValidation,
+      let check = validation.checks.first(where: { $0.id == id }) else {
+      integrationValidationEvidence = ""
+      return
+    }
+    integrationValidationOutcome = check.outcome ?? .passed
+    integrationValidationEvidence = check.evidence
+  }
+
+  private func recordIntegrationCheck() {
+    guard let validationID = selectedIntegrationValidation?.id,
+      let checkID = selectedIntegrationCheck?.id,
+      let validationIndex = project.integrationValidations.firstIndex(where: { $0.id == validationID }),
+      let checkIndex = project.integrationValidations[validationIndex].checks.firstIndex(where: { $0.id == checkID }) else { return }
+    let evidence = integrationValidationEvidence.trimmingCharacters(in: .whitespacesAndNewlines)
+    project.integrationValidations[validationIndex].checks[checkIndex].outcome = integrationValidationOutcome
+    project.integrationValidations[validationIndex].checks[checkIndex].evidence = evidence
+    project.integrationValidations[validationIndex].checks[checkIndex].updatedAt = Date()
+    let title = project.integrationValidations[validationIndex].checks[checkIndex].title
+    project.validationResults.insert(VibeValidationResult(
+      outcome: integrationValidationOutcome,
+      detail: "[\(english ? "Integration" : "統合")] \(title)\(evidence.isEmpty ? "" : ": \(evidence)")",
+      source: english ? "Integration validation" : "統合確認"), at: 0)
+    project.validationResults = Array(project.validationResults.prefix(100))
+    recordMemory(kind: "integration", detail: english
+      ? "Integration check \(integrationValidationOutcome.title(english: true)): \(title)."
+      : "統合確認を\(integrationValidationOutcome.title(english: false))として記録: \(title)。")
+    saveProjectMemory()
+  }
+
+  @MainActor private func runSwiftIntegrationTests() async {
+    guard let validationID = selectedIntegrationValidation?.id,
+      let checkID = selectedIntegrationCheck?.id,
+      FileManager.default.fileExists(atPath: URL(fileURLWithPath: sourceDirectory).appendingPathComponent("Package.swift").path)
+    else { return }
+    integrationValidationRunning = true
+    integrationValidationMessage = english ? "Running swift test in the integrated source folder…" : "統合済みの作業元フォルダで swift test を実行しています…"
+    defer { integrationValidationRunning = false }
+    let integrationSourceDirectory = sourceDirectory
+    let result = await Task.detached(priority: .userInitiated) { () -> (Int32, String) in
+      let process = Process()
+      let output = Pipe()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+      process.arguments = ["swift", "test"]
+      process.currentDirectoryURL = URL(fileURLWithPath: integrationSourceDirectory, isDirectory: true)
+      process.standardOutput = output
+      process.standardError = output
+      do {
+        try process.run()
+        process.waitUntilExit()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+      } catch {
+        return (-1, error.localizedDescription)
+      }
+    }.value
+    guard let validationIndex = project.integrationValidations.firstIndex(where: { $0.id == validationID }),
+      let checkIndex = project.integrationValidations[validationIndex].checks.firstIndex(where: { $0.id == checkID }) else { return }
+    let output = result.1.trimmingCharacters(in: .whitespacesAndNewlines)
+    let outcome: VibeValidationOutcome = result.0 == 0 ? .passed : .failed
+    project.integrationValidations[validationIndex].checks[checkIndex].outcome = outcome
+    project.integrationValidations[validationIndex].checks[checkIndex].evidence = output
+    project.integrationValidations[validationIndex].checks[checkIndex].updatedAt = Date()
+    integrationValidationOutcome = outcome
+    integrationValidationEvidence = output
+    project.validationResults.insert(VibeValidationResult(
+      outcome: outcome,
+      detail: "[\(english ? "Integration" : "統合")] swift test\(output.isEmpty ? "" : ": \(output)")",
+      source: "swift test"), at: 0)
+    project.validationResults = Array(project.validationResults.prefix(100))
+    integrationValidationMessage = outcome == .passed
+      ? (english ? "swift test passed in the integrated source folder." : "統合済みの作業元フォルダで swift test が成功しました。")
+      : (english ? "swift test failed. Review the output before applying more lanes." : "swift test が失敗しました。追加のレーンを適用する前に出力を確認してください。")
+    recordMemory(kind: "integration", detail: english
+      ? "Ran swift test after integration: \(outcome.title(english: true))."
+      : "統合後に swift test を実行: \(outcome.title(english: false))。")
+    saveProjectMemory()
+  }
+
+  @ViewBuilder private var integrationValidationSection: some View {
+    if !appliedCoordinatorRuns.isEmpty || !project.integrationValidations.isEmpty {
+      GroupBox(english ? "Coordinator integration validation" : "コーディネーター統合確認") {
+        VStack(alignment: .leading, spacing: 9) {
+          Text(english
+            ? "Validate the original project after applying coordinated lanes. Each validation run keeps the exact applied-lane snapshot and its evidence."
+            : "コーディネーター・レーンを適用した後、元のプロジェクトを確認します。確認回ごとに、適用済みレーンと根拠を保存します。")
+            .font(.caption).foregroundStyle(.secondary)
+          HStack {
+            Button(english ? "Start integration validation" : "統合確認を開始", systemImage: "checkmark.shield") {
+              beginIntegrationValidation()
+            }
+            .disabled(appliedCoordinatorRuns.isEmpty)
+            if project.integrationValidations.count > 1 {
+              Picker(english ? "Validation run" : "確認回", selection: Binding(
+                get: { selectedIntegrationValidationID ?? project.integrationValidations.first?.id },
+                set: { selectedIntegrationValidationID = $0; selectIntegrationCheck(nil) })) {
+                ForEach(project.integrationValidations) { validation in
+                  Text(validation.createdAt.formatted(date: .abbreviated, time: .shortened)).tag(Optional(validation.id))
+                }
+              }.pickerStyle(.menu)
+            }
+          }
+          if let validation = selectedIntegrationValidation {
+            let passed = validation.checks.filter { $0.outcome == .passed }.count
+            let failed = validation.checks.filter { $0.outcome == .failed }.count
+            Text(english
+              ? "Applied lanes: \(validation.appliedRunIDs.count) · Checks: \(passed)/\(validation.checks.count) passed\(failed > 0 ? " · \(failed) failed" : "")"
+              : "適用済みレーン: \(validation.appliedRunIDs.count) 件 · 確認: \(passed)/\(validation.checks.count) 件が確認済み\(failed > 0 ? " · \(failed) 件失敗" : "")")
+              .font(.caption).foregroundStyle(failed > 0 ? Color.orange : .secondary)
+            Picker(english ? "Check" : "確認項目", selection: Binding(
+              get: { selectedIntegrationCheck?.id }, set: { selectIntegrationCheck($0) })) {
+              ForEach(validation.checks) { check in
+                Text("\(check.outcome?.title(english: english) ?? (english ? "Not run" : "未実行")) · \(check.title)")
+                  .tag(Optional(check.id))
+              }
+            }.pickerStyle(.menu)
+            if let check = selectedIntegrationCheck {
+              Picker(english ? "Result" : "結果", selection: $integrationValidationOutcome) {
+                ForEach(VibeValidationOutcome.allCases) { outcome in
+                  Text(outcome.title(english: english)).tag(outcome)
+                }
+              }.pickerStyle(.segmented)
+              labeledEditor(
+                english ? "Evidence or notes" : "根拠・メモ",
+                english ? "What happened? Include commands, observed behavior, or a failure summary." : "実行したコマンド、確認した動作、失敗内容などを記録します。",
+                text: $integrationValidationEvidence, minHeight: 54)
+              HStack {
+                Button(english ? "Record check" : "確認を記録", systemImage: "checklist") {
+                  recordIntegrationCheck()
+                }
+                if FileManager.default.fileExists(atPath: URL(fileURLWithPath: sourceDirectory).appendingPathComponent("Package.swift").path) {
+                  Button(english ? "Run swift test" : "swift test を実行", systemImage: "terminal") {
+                    Task { await runSwiftIntegrationTests() }
+                  }
+                  .disabled(integrationValidationRunning)
+                }
+                Spacer()
+                Text(check.outcome?.title(english: english) ?? (english ? "Not run" : "未実行"))
+                  .font(.caption).foregroundStyle(check.outcome == .failed ? Color.red : .secondary)
+              }
+            }
+          }
+          if let integrationValidationMessage {
+            Text(integrationValidationMessage).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+          }
+        }
+        .padding(.top, 4)
+      }
+    }
+  }
+
   private var validationEvidenceSection: some View {
     GroupBox(english ? "Validation results" : "確認結果と根拠") {
       VStack(alignment: .leading, spacing: 9) {
@@ -7967,7 +8178,14 @@ private struct VibeProjectEditor: View {
     let hasChecks = !project.validationSteps.isEmpty
     let hasEvidence = project.validationResults.contains { $0.outcome == .passed }
     let hasFailure = project.validationResults.contains { $0.outcome == .failed }
-    let ready = hasBrief && hasApprovedPlan && hasChecks && hasEvidence && !hasFailure
+    let latestIntegration = project.integrationValidations.first
+    let needsIntegrationValidation = !appliedCoordinatorRuns.isEmpty
+    let appliedLaneIDs = Set(appliedCoordinatorRuns.map(\.id))
+    let latestValidatedLaneIDs = Set(latestIntegration?.appliedRunIDs ?? [])
+    let hasIntegratedEvidence = !needsIntegrationValidation || (latestValidatedLaneIDs == appliedLaneIDs
+      && latestIntegration?.checks.isEmpty == false
+      && latestIntegration?.checks.allSatisfy { $0.outcome == .passed } == true)
+    let ready = hasBrief && hasApprovedPlan && hasChecks && hasEvidence && hasIntegratedEvidence && !hasFailure
     return GroupBox(english ? "Completion readiness" : "完成の準備状況") {
       VStack(alignment: .leading, spacing: 8) {
         Text(english ? "Use this as a final check before calling the project complete." : "プロジェクトを完成にする前の最終確認です。")
@@ -7976,6 +8194,9 @@ private struct VibeProjectEditor: View {
         readinessRow(hasApprovedPlan, english ? "The build plan is approved" : "作る計画を確認済み")
         readinessRow(hasChecks, english ? "Validation checks are listed" : "確認項目が登録されている")
         readinessRow(hasEvidence, english ? "At least one check is recorded as passed" : "確認済みの結果が1件以上ある")
+        if needsIntegrationValidation {
+          readinessRow(hasIntegratedEvidence, english ? "The integrated lanes passed their validation" : "統合済みレーンの確認がすべて成功している")
+        }
         if hasFailure {
           Label(english ? "A failed check needs attention before completion." : "失敗した確認結果があるため、完了前に対応が必要です。", systemImage: "exclamationmark.triangle.fill")
             .font(.caption).foregroundStyle(.orange)
@@ -8769,6 +8990,7 @@ private struct VibeProjectEditor: View {
     case "dependency": return "arrow.triangle.branch"
     case "proposal": return "doc.text"
     case "build": return "hammer"
+    case "integration": return "checkmark.shield"
     case "apply": return "checkmark.seal"
     case "revert": return "arrow.uturn.backward"
     case "discard": return "trash"
