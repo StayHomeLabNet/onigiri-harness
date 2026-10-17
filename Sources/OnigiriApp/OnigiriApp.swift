@@ -926,6 +926,15 @@ private struct VibeReleasePackageEvidence: Codable {
   var coordinatedBuilds: [VibeReleasePackageBuildEvidence]
 }
 
+private struct VibeReleasePackageRecord: Identifiable, Codable, Equatable {
+  var id: UUID = UUID()
+  var exportedAt: Date = Date()
+  var folderName: String
+  var appliedRunIDs: [UUID]
+  var integrationValidationID: UUID?
+  var releaseAssessmentAt: Date
+}
+
 private struct VibeProject: Identifiable, Codable, Equatable {
   var archived: Bool = false
   var id: UUID
@@ -949,6 +958,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var coordinatorPlans: [VibeCoordinatorPlan]
   var integrationValidations: [VibeIntegrationValidation]
   var releaseReadiness: VibeReleaseReadiness?
+  var releasePackages: [VibeReleasePackageRecord]
   var memory: [VibeProjectMemoryEntry]
   var createdAt: Date
   var updatedAt: Date
@@ -957,7 +967,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     id: UUID = UUID(), archived: Bool = false, title: String, goal: String, audience: String,
     essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], validationResults: [VibeValidationResult] = [], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
-    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(), coordinatorPolicy: VibeCoordinatorPolicy = VibeCoordinatorPolicy(), coordinatorPlans: [VibeCoordinatorPlan] = [], integrationValidations: [VibeIntegrationValidation] = [], releaseReadiness: VibeReleaseReadiness? = nil,
+    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(), coordinatorPolicy: VibeCoordinatorPolicy = VibeCoordinatorPolicy(), coordinatorPlans: [VibeCoordinatorPlan] = [], integrationValidations: [VibeIntegrationValidation] = [], releaseReadiness: VibeReleaseReadiness? = nil, releasePackages: [VibeReleasePackageRecord] = [],
     memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
   ) {
     self.id = id
@@ -982,6 +992,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     self.coordinatorPlans = coordinatorPlans
     self.integrationValidations = integrationValidations
     self.releaseReadiness = releaseReadiness
+    self.releasePackages = releasePackages
     self.memory = memory
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -989,7 +1000,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, archived, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
-    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, coordinatorPolicy, coordinatorPlans, integrationValidations, releaseReadiness, memory, createdAt, updatedAt
+    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, coordinatorPolicy, coordinatorPlans, integrationValidations, releaseReadiness, releasePackages, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
@@ -1017,6 +1028,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
       coordinatorPlans: try values.decodeIfPresent([VibeCoordinatorPlan].self, forKey: .coordinatorPlans) ?? [],
       integrationValidations: try values.decodeIfPresent([VibeIntegrationValidation].self, forKey: .integrationValidations) ?? [],
       releaseReadiness: try values.decodeIfPresent(VibeReleaseReadiness.self, forKey: .releaseReadiness),
+      releasePackages: try values.decodeIfPresent([VibeReleasePackageRecord].self, forKey: .releasePackages) ?? [],
       memory: try values.decodeIfPresent([VibeProjectMemoryEntry].self, forKey: .memory) ?? [],
       createdAt: try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
       updatedAt: try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date())
@@ -7514,6 +7526,7 @@ private struct VibeProjectEditor: View {
         validationEvidenceSection
         completionReadinessSection
         releaseReadinessSection
+        releaseHistorySection
         handoffSection
         timelineSection
         projectMemorySection
@@ -8374,6 +8387,64 @@ private struct VibeProjectEditor: View {
     }
   }
 
+  private func isCurrentReleasePackage(_ record: VibeReleasePackageRecord) -> Bool {
+    Set(record.appliedRunIDs) == Set(appliedCoordinatorRuns.map(\.id))
+      && record.integrationValidationID == project.integrationValidations.first?.id
+  }
+
+  private func beginReleaseRevalidation() {
+    project.releaseReadiness = nil
+    project.status = .active
+    releasePackageMessage = nil
+    recordMemory(kind: "release", detail: english
+      ? "Started revalidation after a release package became stale."
+      : "リリースパッケージが古くなったため、再確認を開始しました。")
+    if !appliedCoordinatorRuns.isEmpty {
+      beginIntegrationValidation()
+    } else {
+      saveProjectMemory()
+    }
+  }
+
+  private var releaseHistorySection: some View {
+    GroupBox(english ? "Release history and revalidation" : "リリース履歴と再確認") {
+      VStack(alignment: .leading, spacing: 8) {
+        Text(english
+          ? "Exported packages retain the applied-lane and integration-validation snapshots used at the time. A package becomes stale when those snapshots no longer match the project."
+          : "書き出したパッケージには、判断時の適用済みレーンと統合確認を保存します。現在のプロジェクトと一致しなくなると、再確認が必要として表示します。")
+          .font(.caption).foregroundStyle(.secondary)
+        if project.releasePackages.isEmpty {
+          Text(english ? "No release package has been exported yet." : "リリースパッケージはまだ書き出されていません。")
+            .font(.caption).foregroundStyle(.secondary)
+        } else {
+          ForEach(project.releasePackages.prefix(8)) { record in
+            let current = isCurrentReleasePackage(record)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+              Image(systemName: current ? "checkmark.seal.fill" : "arrow.triangle.2.circlepath")
+                .foregroundStyle(current ? Color.green : Color.orange)
+              VStack(alignment: .leading, spacing: 1) {
+                Text(record.folderName).font(.caption).textSelection(.enabled)
+                Text(english
+                  ? "\(record.exportedAt.formatted(date: .abbreviated, time: .shortened)) · \(record.appliedRunIDs.count) lane(s)"
+                  : "\(record.exportedAt.formatted(date: .abbreviated, time: .shortened)) · \(record.appliedRunIDs.count) レーン")
+                  .font(.caption2).foregroundStyle(.secondary)
+              }
+              Spacer()
+              Text(current ? (english ? "Current" : "最新") : (english ? "Revalidate" : "再確認が必要"))
+                .font(.caption).foregroundStyle(current ? Color.green : Color.orange)
+            }
+          }
+        }
+        if !project.releasePackages.isEmpty && (!project.releasePackages.allSatisfy(isCurrentReleasePackage) || project.releaseReadiness == nil) {
+          Button(english ? "Start revalidation" : "再確認を開始", systemImage: "arrow.clockwise.circle") {
+            beginReleaseRevalidation()
+          }
+        }
+      }
+      .padding(.top, 4)
+    }
+  }
+
   private func releasePackageFolderName() -> String {
     let base = project.title.trimmingCharacters(in: .whitespacesAndNewlines)
       .replacingOccurrences(of: "/", with: "-")
@@ -8466,6 +8537,16 @@ private struct VibeProjectEditor: View {
       let overview = "# \(project.title.isEmpty ? "Onigiri Project" : project.title)\n\n\(project.goal)\n\nSee `RELEASE_CHECKLIST.md`, `VALIDATION.md`, `HANDOFF.md`, and `EVIDENCE.json`.\n"
       try overview.write(to: destination.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
       try JSONEncoder().encode(evidence).write(to: destination.appendingPathComponent("EVIDENCE.json"), options: .atomic)
+      project.releasePackages.insert(VibeReleasePackageRecord(
+        folderName: destination.lastPathComponent,
+        appliedRunIDs: readiness.appliedRunIDs,
+        integrationValidationID: readiness.integrationValidationID,
+        releaseAssessmentAt: readiness.assessedAt), at: 0)
+      project.releasePackages = Array(project.releasePackages.prefix(50))
+      recordMemory(kind: "release", detail: english
+        ? "Exported release package: \(destination.lastPathComponent)."
+        : "リリースパッケージを書き出しました: \(destination.lastPathComponent)。")
+      saveProjectMemory()
       releasePackageMessage = english ? "Saved: \(destination.lastPathComponent)" : "保存しました: \(destination.lastPathComponent)"
     } catch {
       releasePackageMessage = error.localizedDescription

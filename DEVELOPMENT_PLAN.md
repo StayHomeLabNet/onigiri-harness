@@ -127,6 +127,7 @@ flowchart LR
 | 2.42 — Coordinator Integration Validation | 実装済み | 適用済みレーンのスナップショットに対して統合確認を保存し、手動根拠とSwift Packageの`swift test`結果を統合後の証跡として記録 |
 | 2.43 — Coordinator Release Readiness | 実装済み | 完成状態、未適用レーン、統合確認、ブロッカー、失敗結果を最終ゲートとして集約し、リリース判断と根拠を保存 |
 | 2.44 — Coordinator Release Package & Checklist | 実装済み | リリース判断が最新の場合に、共有用README、チェックリスト、確認根拠、引き継ぎ、構造化証跡を1フォルダへ書き出し |
+| 2.45 — Coordinator Release History & Revalidation | 実装済み | 書き出したパッケージの判断時点のレーン・統合確認を履歴化し、現在との差分から再確認が必要な成果物を表示 |
 
 完了条件:
 
