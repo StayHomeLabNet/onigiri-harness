@@ -2044,6 +2044,32 @@ private struct KnowledgeImportFailure {
   let reason: String
 }
 
+private enum OnigiriWorkspace: String, CaseIterable, Identifiable {
+  case chat, knowledge, build, explore, data
+
+  var id: String { rawValue }
+
+  func title(english: Bool) -> String {
+    switch self {
+    case .chat: return english ? "Chat" : "チャット"
+    case .knowledge: return english ? "Knowledge" : "知識"
+    case .build: return english ? "Build" : "プロジェクト制作"
+    case .explore: return english ? "Research" : "調査・実験"
+    case .data: return english ? "Settings" : "設定・データ"
+    }
+  }
+
+  var symbol: String {
+    switch self {
+    case .chat: return "bubble.left.and.bubble.right"
+    case .knowledge: return "books.vertical"
+    case .build: return "hammer"
+    case .explore: return "safari"
+    case .data: return "gearshape.2"
+    }
+  }
+}
+
 private func copyToPasteboard(_ text: String) {
   NSPasteboard.general.clearContents()
   NSPasteboard.general.setString(text, forType: .string)
@@ -2086,6 +2112,7 @@ struct ChatView: View {
   @State private var customSearchPresets: [SearchPreset] = []
   @State private var knowledgeSearchQuery = ""
   @State private var quickKnowledgeSearchQuery = ""
+  @State private var selectedWorkspace: OnigiriWorkspace = .chat
   @State private var knowledgeButtonsScrollVisibility = KnowledgeButtonsScrollVisibility()
   @State private var selectedCitation: KnowledgeChunkMatch?
   @State private var showingKnowledgeImporter = false
@@ -4086,163 +4113,113 @@ struct ChatView: View {
 
   private var knowledgeSettings: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 10) {
-        Label(knowledgeStatusLabel, systemImage: "doc.text.magnifyingglass")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .fixedSize(horizontal: true, vertical: false)
+      Picker("ワークスペース", selection: $selectedWorkspace) {
+        ForEach(OnigiriWorkspace.allCases) { workspace in
+          Label(workspace.title(english: isEnglishUI), systemImage: workspace.symbol).tag(workspace)
+        }
+      }
+      .pickerStyle(.segmented)
+      .labelsHidden()
 
-        TextField("RAG検索", text: $quickKnowledgeSearchQuery)
-          .textFieldStyle(.roundedBorder)
-          .frame(width: 220)
-          .onSubmit {
+      HStack(spacing: 8) {
+        Label(knowledgeStatusLabel, systemImage: "doc.text.magnifyingglass")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Spacer()
+        Text(workspaceDescription)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      workspaceControls
+    }
+  }
+
+  private var isEnglishUI: Bool {
+    (AppLanguage(rawValue: uiLanguageCode) ?? .japanese) == .english
+  }
+
+  private var workspaceDescription: String {
+    switch selectedWorkspace {
+    case .chat: return isEnglishUI ? "Focused conversation" : "会話に集中"
+    case .knowledge: return isEnglishUI ? "Documents and RAG" : "資料とRAG"
+    case .build: return isEnglishUI ? "Projects and AI tasks" : "プロジェクトとAIタスク"
+    case .explore: return isEnglishUI ? "Web, decisions, evidence" : "Web・意思決定・根拠"
+    case .data: return isEnglishUI ? "Profiles, settings, and data" : "プロファイル・設定・データ"
+    }
+  }
+
+  @ViewBuilder private var workspaceControls: some View {
+    switch selectedWorkspace {
+    case .chat:
+      EmptyView()
+    case .knowledge:
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 8) {
+          TextField(isEnglishUI ? "Search knowledge" : "RAG検索", text: $quickKnowledgeSearchQuery)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit { Task { await searchKnowledgeFromToolbar() } }
+            .disabled(busy || knowledgeStatus.chunkCount == 0)
+          Button(isEnglishUI ? "Search" : "検索", systemImage: "magnifyingglass") {
             Task { await searchKnowledgeFromToolbar() }
           }
           .disabled(busy || knowledgeStatus.chunkCount == 0)
-
-        Button("検索", systemImage: "magnifyingglass") {
-          Task { await searchKnowledgeFromToolbar() }
-        }
-        .disabled(busy || knowledgeStatus.chunkCount == 0)
-
-        Menu {
-          Button("このウインドウで開く", systemImage: "rectangle.on.rectangle") {
-            showingWebResearch = true
+          Button(isEnglishUI ? "Add documents" : "資料追加", systemImage: "doc.badge.plus") {
+            showingKnowledgeImporter = true
           }
-          Button("別ウインドウで開く", systemImage: "macwindow") {
-            openWindow(id: "web-research")
+          .disabled(busy)
+          Button(isEnglishUI ? "Documents" : "資料一覧", systemImage: "list.bullet.rectangle") {
+            Task { await loadKnowledgeDocuments(); showingKnowledgeDocuments = true }
           }
-        } label: {
-          Label("Webリサーチ", systemImage: "safari")
+          .disabled(busy || knowledgeStatus.documentCount == 0)
         }
-        .disabled(busy)
-
-        Button("AIタスク", systemImage: "terminal") {
-          showingCodexTasks = true
-          Task { await loadCodexTasks() }
+        HStack(spacing: 8) {
+          Button(isEnglishUI ? "Related chunks" : "関連チャンク", systemImage: "quote.bubble") { Task { await searchKnowledgeForCurrentText() } }
+            .disabled(busy || knowledgeStatus.chunkCount == 0)
+          Button(isEnglishUI ? "Search settings" : "検索設定", systemImage: "slider.horizontal.3") { showingSearchSettings = true }.disabled(busy)
+          Button(isEnglishUI ? "Chunking" : "分割設定", systemImage: "square.grid.2x2") { showingChunkingSettings = true }.disabled(busy)
+          Menu(isEnglishUI ? "More" : "その他") {
+            Button(isEnglishUI ? "Feedback log" : "評価ログ", systemImage: "list.clipboard") { loadSearchFeedback(); showingSearchFeedbackLog = true }
+            Button(isEnglishUI ? "Selection history" : "選択履歴", systemImage: "clock.arrow.circlepath") { showingKnowledgeSelectionHistory = true }
+            Button(isEnglishUI ? "RAG evaluation" : "RAG評価", systemImage: "chart.bar.xaxis") { showingRAGEvaluation = true }
+            Button(isEnglishUI ? "Refresh embeddings" : "埋め込み更新", systemImage: "sparkle.magnifyingglass") { Task { await refreshKnowledgeEmbeddings() } }
+            Divider()
+            Button(isEnglishUI ? "Clear documents" : "資料クリア", systemImage: "trash", role: .destructive) { Task { await clearKnowledge() } }
+          }
+          .disabled(busy)
         }
-        .disabled(busy)
-
-        Button("プロジェクト", systemImage: "target") {
-          showingVibeProjects = true
-        }
-        .disabled(busy)
-
-        Button("MCP", systemImage: "point.3.connected.trianglepath.dotted") {
-          showingMCPAudit = true
-          Task { await loadKnowledgeToolAudit() }
-        }
-        .disabled(busy)
-
-        Button("Decision Lab", systemImage: "switch.2") {
-          showingDecisionLab = true
-          Task { await loadDecisionRuns() }
-        }
-        .disabled(busy)
-
-        Button("根拠・再現", systemImage: "arrow.triangle.2.circlepath.doc.on.clipboard") {
-          showingEvidenceReplay = true
-        }
-        .disabled(messages.filter { $0.role == .assistant && $0.evidence != nil }.isEmpty)
-
-        Button("データ管理", systemImage: "externaldrive.badge.timemachine") {
-          showingDataManagement = true
-        }
-        .disabled(busy)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
       }
+    case .build:
+      HStack(spacing: 8) {
+        Button(isEnglishUI ? "Open projects" : "プロジェクトを開く", systemImage: "target") { showingVibeProjects = true }
+        Button(isEnglishUI ? "AI tasks" : "AIタスク", systemImage: "terminal") { showingCodexTasks = true; Task { await loadCodexTasks() } }
+      }
+      .buttonStyle(.bordered)
       .controlSize(.small)
-
-      GeometryReader { viewport in
-        ScrollViewReader { scrollProxy in
-          ZStack {
-            ScrollView(.horizontal, showsIndicators: false) {
-              HStack(spacing: 8) {
-                Button("資料一覧", systemImage: "list.bullet.rectangle") {
-                  Task {
-                    await loadKnowledgeDocuments()
-                    showingKnowledgeDocuments = true
-                  }
-                }
-                .disabled(busy || knowledgeStatus.documentCount == 0)
-                .id("knowledgeButtonsStart")
-
-                Button("関連チャンク", systemImage: "quote.bubble") {
-                  Task { await searchKnowledgeForCurrentText() }
-                }
-                .disabled(busy || knowledgeStatus.chunkCount == 0)
-
-                Button("検索設定", systemImage: "slider.horizontal.3") {
-                  showingSearchSettings = true
-                }
-                .disabled(busy)
-
-                Button("分割設定", systemImage: "square.grid.2x2") {
-                  showingChunkingSettings = true
-                }
-                .disabled(busy)
-
-                Button("評価ログ", systemImage: "list.clipboard") {
-                  loadSearchFeedback()
-                  showingSearchFeedbackLog = true
-                }
-                .disabled(busy)
-
-                Button("選択履歴", systemImage: "clock.arrow.circlepath") {
-                  showingKnowledgeSelectionHistory = true
-                }
-                .disabled(busy || knowledgeSelectionHistory.isEmpty)
-
-                Button("RAG評価", systemImage: "chart.bar.xaxis") {
-                  showingRAGEvaluation = true
-                }
-                .disabled(busy || (ragEvaluationCases.isEmpty && knowledgeDocuments.isEmpty))
-
-                Button("埋め込み更新", systemImage: "sparkle.magnifyingglass") {
-                  Task { await refreshKnowledgeEmbeddings() }
-                }
-                .disabled(busy || knowledgeStatus.chunkCount == 0)
-
-                Button("資料追加", systemImage: "doc.badge.plus") {
-                  showingKnowledgeImporter = true
-                }
-                .disabled(busy)
-
-                Button("資料クリア", systemImage: "trash") {
-                  Task { await clearKnowledge() }
-                }
-                .disabled(busy || knowledgeStatus.chunkCount == 0)
-                .id("knowledgeButtonsEnd")
-              }
-              .fixedSize(horizontal: true, vertical: false)
-              .buttonStyle(.bordered)
-              .controlSize(.small)
-            }
-            .frame(width: viewport.size.width, alignment: .leading)
-            .onScrollGeometryChange(for: KnowledgeButtonsScrollVisibility.self) { geometry in
-              // Use the scroll view's actual visible rectangle; a child view's
-              // frame can remain unchanged while the native scroll view scrolls.
-              let visible = geometry.visibleRect
-              let tolerance: CGFloat = 1
-              return KnowledgeButtonsScrollVisibility(
-                leading: visible.minX > tolerance,
-                trailing: geometry.contentSize.width - visible.maxX > tolerance
-              )
-            } action: { _, visibility in
-              knowledgeButtonsScrollVisibility = visibility
-            }
-            .clipped()
-
-            knowledgeButtonsScrollCue(edge: .leading, visible: knowledgeButtonsScrollVisibility.leading) {
-              withAnimation { scrollProxy.scrollTo("knowledgeButtonsStart", anchor: .leading) }
-            }
-            knowledgeButtonsScrollCue(edge: .trailing, visible: knowledgeButtonsScrollVisibility.trailing) {
-              withAnimation { scrollProxy.scrollTo("knowledgeButtonsEnd", anchor: .trailing) }
-            }
-          }
-        }
+    case .explore:
+      HStack(spacing: 8) {
+        Menu {
+          Button(isEnglishUI ? "Open here" : "このウインドウで開く", systemImage: "rectangle.on.rectangle") { showingWebResearch = true }
+          Button(isEnglishUI ? "Open separate window" : "別ウインドウで開く", systemImage: "macwindow") { openWindow(id: "web-research") }
+        } label: { Label(isEnglishUI ? "Web research" : "Webリサーチ", systemImage: "safari") }
+        Button("MCP", systemImage: "point.3.connected.trianglepath.dotted") { showingMCPAudit = true; Task { await loadKnowledgeToolAudit() } }
+        Button("Decision Lab", systemImage: "switch.2") { showingDecisionLab = true; Task { await loadDecisionRuns() } }
+        Button(isEnglishUI ? "Evidence & replay" : "根拠・再現", systemImage: "arrow.triangle.2.circlepath.doc.on.clipboard") { showingEvidenceReplay = true }
+          .disabled(messages.filter { $0.role == .assistant && $0.evidence != nil }.isEmpty)
       }
-      .frame(height: 28)
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .disabled(busy)
+    case .data:
+      HStack(spacing: 8) {
+        Button(isEnglishUI ? "Profiles" : "プロファイル", systemImage: "person.crop.circle") { showingProductProfiles = true }
+        Button(isEnglishUI ? "Data management" : "データ管理", systemImage: "externaldrive.badge.timemachine") { showingDataManagement = true }
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .disabled(busy)
     }
   }
 
@@ -7341,6 +7318,32 @@ private struct VibeProjectsView: View {
   }
 }
 
+private enum VibeProjectStage: String, CaseIterable, Identifiable {
+  case define, plan, implement, integrate, release
+
+  var id: String { rawValue }
+
+  func title(english: Bool) -> String {
+    switch self {
+    case .define: return english ? "1 Define" : "1 定義"
+    case .plan: return english ? "2 Plan" : "2 計画"
+    case .implement: return english ? "3 Build" : "3 実装"
+    case .integrate: return english ? "4 Verify" : "4 確認"
+    case .release: return english ? "5 Release" : "5 完成"
+    }
+  }
+
+  func summary(english: Bool) -> String {
+    switch self {
+    case .define: return english ? "Goal, scope, and project memory" : "目標・範囲・プロジェクトメモリー"
+    case .plan: return english ? "Proposal, tasks, and coordination" : "提案・タスク・コーディネート"
+    case .implement: return english ? "Run the approved build safely" : "確認済みのビルドを安全に実行"
+    case .integrate: return english ? "Review changes and validation evidence" : "変更と検証結果をレビュー"
+    case .release: return english ? "Readiness, handoff, and history" : "完成判定・引き継ぎ・履歴"
+    }
+  }
+}
+
 private struct VibeProjectEditor: View {
   let sourceProject: VibeProject
   let english: Bool
@@ -7396,6 +7399,7 @@ private struct VibeProjectEditor: View {
   @State private var releasePackageMessage: String?
   @State private var comparisonBaseReleaseID: UUID?
   @State private var comparisonTargetReleaseID: UUID?
+  @State private var selectedProjectStage: VibeProjectStage = .define
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -7431,10 +7435,12 @@ private struct VibeProjectEditor: View {
           .pickerStyle(.menu)
         }
 
-        buildGuideSection
+        projectStagePicker
         projectHealthSection
-        explicitMemorySection
-        projectCoordinatorSection
+
+        if selectedProjectStage == .define {
+          buildGuideSection
+          explicitMemorySection
 
         GroupBox(english ? "Start with a template" : "テンプレートから始める") {
           VStack(alignment: .leading, spacing: 9) {
@@ -7520,19 +7526,33 @@ private struct VibeProjectEditor: View {
           .padding(.top, 4)
         }
 
-        proposalSection
-        guidedBuildSection
-        reviewSection
-        integrationReviewSection
-        integrationValidationSection
-        validationEvidenceSection
-        completionReadinessSection
-        releaseReadinessSection
-        releaseHistorySection
-        releaseComparisonSection
-        handoffSection
-        timelineSection
-        projectMemorySection
+        }
+
+        if selectedProjectStage == .plan {
+          proposalSection
+          projectCoordinatorSection
+          projectMemorySection
+        }
+
+        if selectedProjectStage == .implement {
+          guidedBuildSection
+        }
+
+        if selectedProjectStage == .integrate {
+          reviewSection
+          integrationReviewSection
+          integrationValidationSection
+          validationEvidenceSection
+        }
+
+        if selectedProjectStage == .release {
+          completionReadinessSection
+          releaseReadinessSection
+          releaseHistorySection
+          releaseComparisonSection
+          handoffSection
+          timelineSection
+        }
 
         HStack {
           if let delete {
@@ -7571,6 +7591,24 @@ private struct VibeProjectEditor: View {
         try? await Task.sleep(for: .seconds(3))
       }
     }
+  }
+
+  private var projectStagePicker: some View {
+    VStack(alignment: .leading, spacing: 5) {
+      Picker(english ? "Build stage" : "制作ステージ", selection: $selectedProjectStage) {
+        ForEach(VibeProjectStage.allCases) { stage in
+          Text(stage.title(english: english)).tag(stage)
+        }
+      }
+      .pickerStyle(.segmented)
+      .labelsHidden()
+      Text(selectedProjectStage.summary(english: english))
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    .padding(10)
+    .background(Color.accentColor.opacity(0.08))
+    .clipShape(RoundedRectangle(cornerRadius: 10))
   }
 
   private var buildGuideSection: some View {
