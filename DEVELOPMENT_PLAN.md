@@ -129,6 +129,7 @@ flowchart LR
 | 2.44 — Coordinator Release Package & Checklist | 実装済み | リリース判断が最新の場合に、共有用README、チェックリスト、確認根拠、引き継ぎ、構造化証跡を1フォルダへ書き出し |
 | 2.45 — Coordinator Release History & Revalidation | 実装済み | 書き出したパッケージの判断時点のレーン・統合確認を履歴化し、現在との差分から再確認が必要な成果物を表示 |
 | 2.46 — Coordinator Release Comparison & Rollback Guide | 実装済み | 2つのリリース時点の適用レーン・統合確認を比較し、新規レーンから安全な個別パッチ確認とロールバックへ案内 |
+| 2.47 — Coordinator Incident Notes & Recovery Plan | 任意・保留 | リリース後の問題をリリース・レーン・検証結果と関連付け、復旧手順と再リリース条件を記録 |
 
 完了条件:
 
