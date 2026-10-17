@@ -135,6 +135,7 @@ flowchart LR
 | 2.50 — Interaction Polish & User Feedback Loop | 実装済み | ⌘1〜⌘5によるワークスペース切替、最後に開いた領域の復元、ローカル改善メモの保存・削除・Markdown書出しを追加 |
 | 2.51 — Workspace Personalization & Guided Onboarding | 実装済み | 起動時の既定／前回ワークスペース設定、モデル・資料・プロジェクト制作へ導く開始ガイド、ガイドの任意再表示を追加 |
 | 2.52 — Workspace Favorites & Contextual Shortcuts | 実装済み | お気に入り操作を設定から選択し、資料未登録・根拠付き回答・プロジェクト紐付けなど現在の状態に応じた次の操作をチャットへ表示 |
+| 2.53 — Workspace Activity & Smart Resume | 実装済み | ワークスペースとお気に入り操作のローカル履歴、上部の再開メニュー、履歴記録の停止・消去を追加 |
 
 完了条件:
 

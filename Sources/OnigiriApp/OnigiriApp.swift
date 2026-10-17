@@ -117,6 +117,8 @@ private struct WorkspaceSettingsView: View {
   @AppStorage("onigiri.defaultWorkspace") private var defaultWorkspaceRaw = OnigiriWorkspace.chat.rawValue
   @AppStorage("onigiri.hasCompletedOnboarding") private var hasCompletedOnboarding = false
   @AppStorage("onigiri.favoriteQuickActions") private var favoriteQuickActionsRaw = OnigiriQuickAction.defaultRawValue
+  @AppStorage("onigiri.recordsWorkspaceActivity") private var recordsWorkspaceActivity = true
+  @StateObject private var activityStore = WorkspaceActivityStore.shared
 
   private var english: Bool { (AppLanguage(rawValue: languageCode) ?? .japanese) == .english }
 
@@ -144,6 +146,17 @@ private struct WorkspaceSettingsView: View {
         ForEach(OnigiriQuickAction.allCases) { action in
           Toggle(action.title(english: english), isOn: favoriteBinding(for: action))
         }
+      }
+
+      Section(english ? "Activity & resume" : "作業履歴と再開") {
+        Toggle(english ? "Remember workspace activity" : "ワークスペースの利用履歴を記録", isOn: $recordsWorkspaceActivity)
+        Text(english ? "Recent work stays on this Mac and appears in the Resume menu." : "最近の作業はこのMacだけに保存され、再開メニューから開けます。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Button(english ? "Clear activity history" : "利用履歴を消去", systemImage: "trash", role: .destructive) {
+          activityStore.clear()
+        }
+        .disabled(activityStore.entries.isEmpty)
       }
 
       Section(english ? "Guided onboarding" : "開始ガイド") {
@@ -2200,7 +2213,47 @@ private enum OnigiriWorkspace: String, CaseIterable, Identifiable, Codable {
   }
 }
 
-private enum OnigiriQuickAction: String, CaseIterable, Identifiable, Hashable {
+private struct WorkspaceActivity: Identifiable, Codable {
+  let id: UUID
+  let createdAt: Date
+  let workspace: OnigiriWorkspace
+  let action: OnigiriQuickAction?
+
+  func title(english: Bool) -> String {
+    action?.title(english: english) ?? workspace.title(english: english)
+  }
+}
+
+@MainActor private final class WorkspaceActivityStore: ObservableObject {
+  static let shared = WorkspaceActivityStore()
+  @Published private(set) var entries: [WorkspaceActivity] = []
+  private let key = "onigiri.workspaceActivity"
+
+  private init() {
+    guard let data = UserDefaults.standard.data(forKey: key),
+          let saved = try? JSONDecoder().decode([WorkspaceActivity].self, from: data) else { return }
+    entries = saved.sorted { $0.createdAt > $1.createdAt }
+  }
+
+  func record(workspace: OnigiriWorkspace, action: OnigiriQuickAction? = nil) {
+    if action == nil, let latest = entries.first, latest.workspace == workspace,
+       Date().timeIntervalSince(latest.createdAt) < 2 { return }
+    entries.insert(WorkspaceActivity(id: UUID(), createdAt: Date(), workspace: workspace, action: action), at: 0)
+    entries = Array(entries.prefix(24))
+    persist()
+  }
+
+  func clear() {
+    entries = []
+    UserDefaults.standard.removeObject(forKey: key)
+  }
+
+  private func persist() {
+    UserDefaults.standard.set(try? JSONEncoder().encode(entries), forKey: key)
+  }
+}
+
+private enum OnigiriQuickAction: String, CaseIterable, Identifiable, Hashable, Codable {
   case addKnowledge, openProjects, startAITask, webResearch, evidenceReplay, feedback
 
   var id: String { rawValue }
@@ -2225,6 +2278,15 @@ private enum OnigiriQuickAction: String, CaseIterable, Identifiable, Hashable {
     }
   }
 
+  var workspace: OnigiriWorkspace {
+    switch self {
+    case .addKnowledge: return .knowledge
+    case .openProjects, .startAITask: return .build
+    case .webResearch, .evidenceReplay: return .explore
+    case .feedback: return .data
+    }
+  }
+
   var symbol: String {
     switch self {
     case .addKnowledge: return "doc.badge.plus"
@@ -2246,6 +2308,7 @@ struct ChatView: View {
   @Environment(\.locale) private var locale
   @Environment(\.openWindow) private var openWindow
   @StateObject private var vibeProjectStore = VibeProjectStore.shared
+  @StateObject private var workspaceActivityStore = WorkspaceActivityStore.shared
   @State private var conversations: [StoredConversation] = [.empty]
   @State private var selectedConversationID: UUID?
   @State private var draft = "こんにちは"
@@ -2327,6 +2390,7 @@ struct ChatView: View {
   @AppStorage("onigiri.defaultWorkspace") private var defaultWorkspaceRaw = OnigiriWorkspace.chat.rawValue
   @AppStorage("onigiri.hasCompletedOnboarding") private var hasCompletedOnboarding = false
   @AppStorage("onigiri.favoriteQuickActions") private var favoriteQuickActionsRaw = OnigiriQuickAction.defaultRawValue
+  @AppStorage("onigiri.recordsWorkspaceActivity") private var recordsWorkspaceActivity = true
   private let webResearchSecretStore = KeychainSecretStore()
 
   private var selectedConversation: StoredConversation? {
@@ -2429,9 +2493,11 @@ struct ChatView: View {
         ? OnigiriWorkspace(rawValue: lastWorkspaceRaw)
         : OnigiriWorkspace(rawValue: defaultWorkspaceRaw)
       selectedWorkspace = initialWorkspace ?? .chat
+      if recordsWorkspaceActivity { workspaceActivityStore.record(workspace: selectedWorkspace) }
     }
     .onChange(of: selectedWorkspace) { _, workspace in
       lastWorkspaceRaw = workspace.rawValue
+      if recordsWorkspaceActivity { workspaceActivityStore.record(workspace: workspace) }
     }
     .onReceive(NotificationCenter.default.publisher(for: .selectOnigiriWorkspace)) { notification in
       if let workspace = notification.object as? OnigiriWorkspace {
@@ -4361,6 +4427,9 @@ struct ChatView: View {
   }
 
   private func performQuickAction(_ action: OnigiriQuickAction) {
+    if recordsWorkspaceActivity {
+      workspaceActivityStore.record(workspace: action.workspace, action: action)
+    }
     switch action {
     case .addKnowledge:
       selectedWorkspace = .knowledge
@@ -4433,7 +4502,10 @@ struct ChatView: View {
 
   private var knowledgeSettings: some View {
     VStack(alignment: .leading, spacing: 8) {
-      workspaceNavigation
+      HStack(spacing: 8) {
+        workspaceNavigation
+        resumeMenu
+      }
 
       HStack(spacing: 8) {
         Label(knowledgeStatusLabel, systemImage: "doc.text.magnifyingglass")
@@ -4447,6 +4519,31 @@ struct ChatView: View {
 
       workspaceControls
     }
+  }
+
+  private var resumeMenu: some View {
+    Menu {
+      if workspaceActivityStore.entries.isEmpty {
+        Text(isEnglishUI ? "No recent activity" : "最近の作業はありません")
+      } else {
+        ForEach(workspaceActivityStore.entries.prefix(8)) { entry in
+          Button {
+            selectedWorkspace = entry.workspace
+          } label: {
+            Label(entry.title(english: isEnglishUI), systemImage: entry.workspace.symbol)
+          }
+        }
+        Divider()
+        Button(isEnglishUI ? "Clear history" : "履歴を消去", role: .destructive) {
+          workspaceActivityStore.clear()
+        }
+      }
+    } label: {
+      Label(isEnglishUI ? "Resume" : "再開", systemImage: "clock.arrow.circlepath")
+    }
+    .menuStyle(.borderlessButton)
+    .fixedSize()
+    .help(isEnglishUI ? "Resume recent workspace activity" : "最近のワークスペース作業を再開")
   }
 
   private var workspaceNavigation: some View {
