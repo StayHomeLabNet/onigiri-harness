@@ -908,6 +908,24 @@ private struct VibeReleaseReadiness: Codable, Equatable {
   var integrationValidationID: UUID?
 }
 
+private struct VibeReleasePackageBuildEvidence: Codable {
+  var issueTitle: String
+  var status: String
+  var appliedAt: Date?
+  var planSummary: String?
+  var targetPaths: [String]
+}
+
+private struct VibeReleasePackageEvidence: Codable {
+  var exportedAt: Date = Date()
+  var projectTitle: String
+  var goal: String
+  var releaseReadiness: VibeReleaseReadiness
+  var integrationValidations: [VibeIntegrationValidation]
+  var validationResults: [VibeValidationResult]
+  var coordinatedBuilds: [VibeReleasePackageBuildEvidence]
+}
+
 private struct VibeProject: Identifiable, Codable, Equatable {
   var archived: Bool = false
   var id: UUID
@@ -7363,6 +7381,7 @@ private struct VibeProjectEditor: View {
   @State private var integrationValidationRunning = false
   @State private var integrationValidationMessage: String?
   @State private var releaseReadinessNote = ""
+  @State private var releasePackageMessage: String?
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -8340,8 +8359,116 @@ private struct VibeProjectEditor: View {
             .font(.caption)
           }
         }
+        if releaseReadinessIsCurrent {
+          HStack {
+            Button(english ? "Export release package" : "リリースパッケージを書き出す", systemImage: "shippingbox") {
+              exportReleasePackage()
+            }
+            if let releasePackageMessage {
+              Text(releasePackageMessage).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+          }
+        }
       }
       .padding(.top, 4)
+    }
+  }
+
+  private func releasePackageFolderName() -> String {
+    let base = project.title.trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: "/", with: "-")
+      .replacingOccurrences(of: ":", with: "-")
+    let title = base.isEmpty ? "Onigiri-Project" : base
+    let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+    return "\(title)-release-\(timestamp)"
+  }
+
+  private func releaseChecklistMarkdown() -> String {
+    let pendingLanes = releasePendingCoordinatorRuns.isEmpty
+    let blockersClear = project.activeIssues.allSatisfy { $0.kind != .blocker }
+    let failuresClear = !project.validationResults.contains { $0.outcome == .failed }
+    let integrated = releaseIntegrationIsCurrentAndPassed
+    func mark(_ value: Bool) -> String { value ? "x" : " " }
+    let applied = appliedCoordinatorRuns.compactMap { run -> String? in
+      guard let issueID = run.coordinatorIssueID else { return nil }
+      return project.issues.first { $0.id == issueID }?.title
+    }
+    return """
+    # \(project.title.isEmpty ? "Onigiri Project" : project.title) — \(english ? "Release Checklist" : "リリースチェックリスト")
+
+    - [\(mark(project.status == .completed))] \(english ? "Project is marked complete" : "プロジェクトが完成として記録されている")
+    - [\(mark(pendingLanes))] \(english ? "No coordinated lane is running or waiting to be applied" : "実行中または未適用のコーディネーター・レーンがない")
+    - [\(mark(integrated))] \(english ? "Current integrated lanes passed validation" : "現在の統合済みレーンが確認済み")
+    - [\(mark(blockersClear))] \(english ? "No active blockers remain" : "未解決のブロッカーがない")
+    - [\(mark(failuresClear))] \(english ? "No failed validation remains" : "失敗した確認結果が残っていない")
+
+    ## \(english ? "Applied coordinated lanes" : "適用済みコーディネーター・レーン")
+    \(applied.isEmpty ? "- \(english ? "None" : "なし")" : applied.map { "- \($0)" }.joined(separator: "\n"))
+
+    ## \(english ? "Release note" : "リリースメモ")
+    \(project.releaseReadiness?.note.isEmpty == false ? project.releaseReadiness!.note : (english ? "No note provided." : "メモはありません。"))
+    """
+  }
+
+  private func releaseValidationMarkdown() -> String {
+    let integration = project.integrationValidations.first
+    let checks = integration?.checks.map { check in
+      "- \(check.outcome?.title(english: english) ?? (english ? "Not run" : "未実行")): \(check.title)\(check.evidence.isEmpty ? "" : " — \(check.evidence)")"
+    } ?? []
+    let evidence = project.validationResults.map { result in
+      "- \(result.outcome.title(english: english)) (\(result.source)): \(result.detail)"
+    }
+    return """
+    # \(english ? "Validation evidence" : "確認の根拠")
+
+    ## \(english ? "Latest integration validation" : "最新の統合確認")
+    \(checks.isEmpty ? "- \(english ? "No integration validation recorded." : "統合確認は記録されていません。")" : checks.joined(separator: "\n"))
+
+    ## \(english ? "All recorded validation results" : "記録済みのすべての確認結果")
+    \(evidence.isEmpty ? "- \(english ? "None" : "なし")" : evidence.joined(separator: "\n"))
+    """
+  }
+
+  private func exportReleasePackage() {
+    guard releaseReadinessIsCurrent, let readiness = project.releaseReadiness else { return }
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.prompt = english ? "Choose folder" : "保存先を選択"
+    guard panel.runModal() == .OK, let parent = panel.url else { return }
+    do {
+      let manager = FileManager.default
+      var destination = parent.appendingPathComponent(releasePackageFolderName(), isDirectory: true)
+      var suffix = 2
+      while manager.fileExists(atPath: destination.path) {
+        destination = parent.appendingPathComponent("\(releasePackageFolderName())-\(suffix)", isDirectory: true)
+        suffix += 1
+      }
+      try manager.createDirectory(at: destination, withIntermediateDirectories: true)
+      let builds = project.buildRuns.compactMap { run -> VibeReleasePackageBuildEvidence? in
+        guard let issueID = run.coordinatorIssueID else { return nil }
+        let issue = project.issues.first { $0.id == issueID }
+        return VibeReleasePackageBuildEvidence(
+          issueTitle: issue?.title ?? (english ? "Coordinated task" : "コーディネーター課題"),
+          status: run.status, appliedAt: run.appliedAt,
+          planSummary: run.coordinatorPlan?.summary,
+          targetPaths: run.coordinatorPlan?.targetPaths ?? [])
+      }
+      let evidence = VibeReleasePackageEvidence(
+        projectTitle: project.title, goal: project.goal, releaseReadiness: readiness,
+        integrationValidations: project.integrationValidations,
+        validationResults: project.validationResults,
+        coordinatedBuilds: builds)
+      try projectHandoffMarkdown().write(to: destination.appendingPathComponent("HANDOFF.md"), atomically: true, encoding: .utf8)
+      try releaseChecklistMarkdown().write(to: destination.appendingPathComponent("RELEASE_CHECKLIST.md"), atomically: true, encoding: .utf8)
+      try releaseValidationMarkdown().write(to: destination.appendingPathComponent("VALIDATION.md"), atomically: true, encoding: .utf8)
+      let overview = "# \(project.title.isEmpty ? "Onigiri Project" : project.title)\n\n\(project.goal)\n\nSee `RELEASE_CHECKLIST.md`, `VALIDATION.md`, `HANDOFF.md`, and `EVIDENCE.json`.\n"
+      try overview.write(to: destination.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+      try JSONEncoder().encode(evidence).write(to: destination.appendingPathComponent("EVIDENCE.json"), options: .atomic)
+      releasePackageMessage = english ? "Saved: \(destination.lastPathComponent)" : "保存しました: \(destination.lastPathComponent)"
+    } catch {
+      releasePackageMessage = error.localizedDescription
     }
   }
 
