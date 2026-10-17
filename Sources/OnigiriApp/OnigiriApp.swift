@@ -7394,6 +7394,8 @@ private struct VibeProjectEditor: View {
   @State private var integrationValidationMessage: String?
   @State private var releaseReadinessNote = ""
   @State private var releasePackageMessage: String?
+  @State private var comparisonBaseReleaseID: UUID?
+  @State private var comparisonTargetReleaseID: UUID?
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -7527,6 +7529,7 @@ private struct VibeProjectEditor: View {
         completionReadinessSection
         releaseReadinessSection
         releaseHistorySection
+        releaseComparisonSection
         handoffSection
         timelineSection
         projectMemorySection
@@ -8442,6 +8445,107 @@ private struct VibeProjectEditor: View {
         }
       }
       .padding(.top, 4)
+    }
+  }
+
+  private var comparisonBaseRelease: VibeReleasePackageRecord? {
+    let id = comparisonBaseReleaseID ?? project.releasePackages.dropFirst().first?.id
+    return project.releasePackages.first { $0.id == id }
+  }
+
+  private var comparisonTargetRelease: VibeReleasePackageRecord? {
+    let id = comparisonTargetReleaseID ?? project.releasePackages.first?.id
+    return project.releasePackages.first { $0.id == id }
+  }
+
+  private func title(for runID: UUID) -> String {
+    guard let run = project.buildRuns.first(where: { $0.id == runID }) else {
+      return english ? "Archived lane" : "過去のレーン"
+    }
+    return run.coordinatorIssueID.flatMap { id in project.issues.first { $0.id == id }?.title }
+      ?? (english ? "Coordinated task" : "コーディネーター課題")
+  }
+
+  private var comparisonAddedRunIDs: [UUID] {
+    guard let target = comparisonTargetRelease else { return [] }
+    let base = Set(comparisonBaseRelease?.appliedRunIDs ?? [])
+    return target.appliedRunIDs.filter { !base.contains($0) }
+  }
+
+  private var comparisonRemovedRunIDs: [UUID] {
+    guard let base = comparisonBaseRelease else { return [] }
+    let target = Set(comparisonTargetRelease?.appliedRunIDs ?? [])
+    return base.appliedRunIDs.filter { !target.contains($0) }
+  }
+
+  private func openRollbackReview(for runID: UUID) {
+    guard let run = project.buildRuns.first(where: { $0.id == runID }) else { return }
+    selectedBuildRunID = run.id
+    Task { await inspectSelectedBuild() }
+  }
+
+  @ViewBuilder private var releaseComparisonSection: some View {
+    if project.releasePackages.count >= 2 {
+      GroupBox(english ? "Release comparison and rollback guide" : "リリース比較とロールバック案内") {
+        VStack(alignment: .leading, spacing: 8) {
+          Text(english
+            ? "Compare two exported release snapshots. Added lanes are candidates to investigate first when a newer release has a problem."
+            : "書き出した2つのリリース時点を比較します。新しいリリースで問題が起きた場合、追加されたレーンから確認します。")
+            .font(.caption).foregroundStyle(.secondary)
+          HStack {
+            Picker(english ? "Earlier release" : "比較元のリリース", selection: Binding(
+              get: { comparisonBaseRelease?.id }, set: { comparisonBaseReleaseID = $0 })) {
+              ForEach(project.releasePackages) { record in
+                Text(record.folderName).tag(Optional(record.id))
+              }
+            }.pickerStyle(.menu)
+            Picker(english ? "Later release" : "比較先のリリース", selection: Binding(
+              get: { comparisonTargetRelease?.id }, set: { comparisonTargetReleaseID = $0 })) {
+              ForEach(project.releasePackages) { record in
+                Text(record.folderName).tag(Optional(record.id))
+              }
+            }.pickerStyle(.menu)
+          }
+          if let base = comparisonBaseRelease, let target = comparisonTargetRelease, base.id != target.id {
+            Text(english
+              ? "\(comparisonAddedRunIDs.count) lane(s) added · \(comparisonRemovedRunIDs.count) lane(s) no longer present · \(base.integrationValidationID == target.integrationValidationID ? "same" : "different") integration validation"
+              : "追加レーン: \(comparisonAddedRunIDs.count) 件 · 含まれなくなったレーン: \(comparisonRemovedRunIDs.count) 件 · 統合確認: \(base.integrationValidationID == target.integrationValidationID ? "同一" : "異なる")")
+              .font(.caption).foregroundStyle(.secondary)
+            if !comparisonAddedRunIDs.isEmpty {
+              Divider()
+              Label(english ? "Rollback guide: inspect added lanes first" : "ロールバック案内: まず追加レーンを確認", systemImage: "arrow.uturn.backward.circle")
+                .font(.caption.bold()).foregroundStyle(.orange)
+              ForEach(comparisonAddedRunIDs, id: \.self) { runID in
+                let run = project.buildRuns.first { $0.id == runID }
+                HStack {
+                  VStack(alignment: .leading, spacing: 1) {
+                    Text(title(for: runID)).font(.caption)
+                    Text(run?.coordinatorPlan?.targetPaths.joined(separator: ", ") ?? "")
+                      .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                  }
+                  Spacer()
+                  Button(english ? "Open patch review" : "パッチ確認を開く", systemImage: "doc.text.magnifyingglass") {
+                    openRollbackReview(for: runID)
+                  }
+                  .font(.caption)
+                  .disabled(run?.appliedAt == nil || run?.revertedAt != nil || reviewingBuild)
+                }
+              }
+              Text(english
+                ? "Open each patch review, confirm the affected files, then use Undo applied changes. Revalidate after every rollback."
+                : "各パッチ確認で影響ファイルを確認してから「適用済み変更を戻す」を実行してください。ロールバックのたびに再確認します。")
+                .font(.caption2).foregroundStyle(.secondary)
+            } else {
+              Text(english ? "No new coordinated lanes were added between these releases." : "この2つのリリース間で追加されたコーディネーター・レーンはありません。")
+                .font(.caption).foregroundStyle(.secondary)
+            }
+          } else {
+            Text(english ? "Choose two different release packages to compare." : "異なる2つのリリースパッケージを選んで比較してください。")
+              .font(.caption).foregroundStyle(.secondary)
+          }
+        }
+        .padding(.top, 4)
+      }
     }
   }
 
@@ -9547,6 +9651,8 @@ private struct VibeProjectEditor: View {
         project.buildRuns[index].revertedAt = Date()
         project.buildRuns[index].status = "適用を取り消し"
         project.buildRuns[index].detail = "Onigiriが適用したパッチを元の作業フォルダから戻しました。"
+        project.status = .active
+        project.releaseReadiness = nil
         recordMemory(kind: "revert", detail: english ? "Reverted the patch applied by Onigiri." : "Onigiriが適用したパッチを戻しました。")
         reviewMessage = english ? "The applied patch was reversed." : "適用済みのパッチを戻しました。"
       case .discard:
