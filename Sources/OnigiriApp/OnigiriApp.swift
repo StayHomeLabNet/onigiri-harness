@@ -2218,9 +2218,15 @@ private struct WorkspaceActivity: Identifiable, Codable {
   let createdAt: Date
   let workspace: OnigiriWorkspace
   let action: OnigiriQuickAction?
+  var pinnedAt: Date?
 
   func title(english: Bool) -> String {
     action?.title(english: english) ?? workspace.title(english: english)
+  }
+
+  func detail(english: Bool) -> String {
+    guard let action else { return english ? "Opened workspace" : "ワークスペースを開いた" }
+    return "\(workspace.title(english: english)) · \(action.title(english: english))"
   }
 }
 
@@ -2235,11 +2241,25 @@ private struct WorkspaceActivity: Identifiable, Codable {
     entries = saved.sorted { $0.createdAt > $1.createdAt }
   }
 
+  var pinnedEntries: [WorkspaceActivity] {
+    entries.filter { $0.pinnedAt != nil }.sorted { ($0.pinnedAt ?? .distantPast) > ($1.pinnedAt ?? .distantPast) }
+  }
+
+  var recentEntries: [WorkspaceActivity] {
+    entries.filter { $0.pinnedAt == nil }
+  }
+
   func record(workspace: OnigiriWorkspace, action: OnigiriQuickAction? = nil) {
     if action == nil, let latest = entries.first, latest.workspace == workspace,
        Date().timeIntervalSince(latest.createdAt) < 2 { return }
-    entries.insert(WorkspaceActivity(id: UUID(), createdAt: Date(), workspace: workspace, action: action), at: 0)
+    entries.insert(WorkspaceActivity(id: UUID(), createdAt: Date(), workspace: workspace, action: action, pinnedAt: nil), at: 0)
     entries = Array(entries.prefix(24))
+    persist()
+  }
+
+  func togglePin(_ entry: WorkspaceActivity) {
+    guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+    entries[index].pinnedAt = entries[index].pinnedAt == nil ? Date() : nil
     persist()
   }
 
@@ -2344,6 +2364,7 @@ struct ChatView: View {
   @State private var quickKnowledgeSearchQuery = ""
   @State private var selectedWorkspace: OnigiriWorkspace = .chat
   @State private var showingExperienceFeedback = false
+  @State private var showingWorkspaceActivity = false
   @State private var showingOnboardingManually = false
   @State private var knowledgeButtonsScrollVisibility = KnowledgeButtonsScrollVisibility()
   @State private var selectedCitation: KnowledgeChunkMatch?
@@ -2575,6 +2596,13 @@ struct ChatView: View {
     .sheet(isPresented: $showingExperienceFeedback) {
       UIExperienceFeedbackView(initialWorkspace: selectedWorkspace, english: isEnglishUI)
         .frame(minWidth: 600, minHeight: 480, alignment: .topLeading)
+    }
+    .sheet(isPresented: $showingWorkspaceActivity) {
+      WorkspaceActivityView(store: workspaceActivityStore, english: isEnglishUI) { entry in
+        selectedWorkspace = entry.workspace
+        showingWorkspaceActivity = false
+      }
+      .frame(minWidth: 620, minHeight: 500, alignment: .topLeading)
     }
     .sheet(isPresented: $showingKnowledgeDocuments) {
       KnowledgeDocumentsView(
@@ -4526,14 +4554,19 @@ struct ChatView: View {
       if workspaceActivityStore.entries.isEmpty {
         Text(isEnglishUI ? "No recent activity" : "最近の作業はありません")
       } else {
-        ForEach(workspaceActivityStore.entries.prefix(8)) { entry in
-          Button {
-            selectedWorkspace = entry.workspace
-          } label: {
-            Label(entry.title(english: isEnglishUI), systemImage: entry.workspace.symbol)
+        if !workspaceActivityStore.pinnedEntries.isEmpty {
+          Text(isEnglishUI ? "Pinned" : "固定")
+          ForEach(workspaceActivityStore.pinnedEntries.prefix(6)) { entry in
+            resumeMenuButton(entry, pinned: true)
           }
+          Divider()
+        }
+        Text(isEnglishUI ? "Recent" : "最近")
+        ForEach(workspaceActivityStore.recentEntries.prefix(8)) { entry in
+          resumeMenuButton(entry, pinned: false)
         }
         Divider()
+        Button(isEnglishUI ? "Manage activity" : "履歴を管理") { showingWorkspaceActivity = true }
         Button(isEnglishUI ? "Clear history" : "履歴を消去", role: .destructive) {
           workspaceActivityStore.clear()
         }
@@ -4544,6 +4577,19 @@ struct ChatView: View {
     .menuStyle(.borderlessButton)
     .fixedSize()
     .help(isEnglishUI ? "Resume recent workspace activity" : "最近のワークスペース作業を再開")
+  }
+
+  private func resumeMenuButton(_ entry: WorkspaceActivity, pinned: Bool) -> some View {
+    Button {
+      selectedWorkspace = entry.workspace
+    } label: {
+      VStack(alignment: .leading, spacing: 1) {
+        Label(entry.title(english: isEnglishUI), systemImage: pinned ? "pin.fill" : entry.workspace.symbol)
+        Text("\(entry.detail(english: isEnglishUI)) · \(entry.createdAt.formatted(date: .abbreviated, time: .shortened))")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+    }
   }
 
   private var workspaceNavigation: some View {
@@ -4692,6 +4738,7 @@ struct ChatView: View {
         Button(isEnglishUI ? "Profiles" : "プロファイル", systemImage: "person.crop.circle") { showingProductProfiles = true }
         Button(isEnglishUI ? "Data management" : "データ管理", systemImage: "externaldrive.badge.timemachine") { showingDataManagement = true }
         Button(isEnglishUI ? "Getting started" : "開始ガイド", systemImage: "sparkles") { showingOnboardingManually = true; selectedWorkspace = .chat }
+        Button(isEnglishUI ? "Activity" : "作業履歴", systemImage: "clock.arrow.circlepath") { showingWorkspaceActivity = true }
         Button(isEnglishUI ? "Feedback" : "改善メモ", systemImage: "text.bubble") { showingExperienceFeedback = true }
       }
       .buttonStyle(.bordered)
@@ -7089,6 +7136,65 @@ private struct MCPAuditView: View {
         try? await Task.sleep(for: .seconds(2))
       }
     }
+  }
+}
+
+private struct WorkspaceActivityView: View {
+  @Environment(\.dismiss) private var dismiss
+  @ObservedObject var store: WorkspaceActivityStore
+  let english: Bool
+  let resume: (WorkspaceActivity) -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      SheetTitleBar(title: english ? "Workspace activity" : "作業履歴")
+      Text(english ? "Pinned work stays at the top of Resume. Recent entries are stored only on this Mac." : "固定した作業は再開メニューの先頭に残ります。履歴はこのMacだけに保存されます。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      if store.entries.isEmpty {
+        ContentUnavailableView(english ? "No activity yet" : "作業履歴はありません", systemImage: "clock.arrow.circlepath")
+      } else {
+        List {
+          if !store.pinnedEntries.isEmpty {
+            Section(english ? "Pinned" : "固定") {
+              ForEach(store.pinnedEntries) { entry in activityRow(entry) }
+            }
+          }
+          if !store.recentEntries.isEmpty {
+            Section(english ? "Recent" : "最近") {
+              ForEach(store.recentEntries) { entry in activityRow(entry) }
+            }
+          }
+        }
+      }
+      HStack {
+        Button(english ? "Clear history" : "履歴を消去", systemImage: "trash", role: .destructive) { store.clear() }
+          .disabled(store.entries.isEmpty)
+        Spacer()
+        Button(english ? "Close" : "閉じる") { dismiss() }
+      }
+    }
+    .padding(20)
+  }
+
+  private func activityRow(_ entry: WorkspaceActivity) -> some View {
+    HStack(spacing: 8) {
+      Button { resume(entry) } label: {
+        VStack(alignment: .leading, spacing: 2) {
+          Label(entry.title(english: english), systemImage: entry.workspace.symbol)
+          Text(entry.detail(english: english)).font(.caption).foregroundStyle(.secondary)
+          Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption2).foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .buttonStyle(.plain)
+      Button(entry.pinnedAt == nil ? (english ? "Pin" : "固定") : (english ? "Unpin" : "固定解除"), systemImage: entry.pinnedAt == nil ? "pin" : "pin.slash") {
+        store.togglePin(entry)
+      }
+      .labelStyle(.iconOnly)
+      .help(entry.pinnedAt == nil ? (english ? "Pin this activity" : "この作業を固定") : (english ? "Unpin this activity" : "固定を解除"))
+    }
+    .padding(.vertical, 2)
   }
 }
 

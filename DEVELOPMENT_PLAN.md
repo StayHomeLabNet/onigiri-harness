@@ -136,6 +136,7 @@ flowchart LR
 | 2.51 — Workspace Personalization & Guided Onboarding | 実装済み | 起動時の既定／前回ワークスペース設定、モデル・資料・プロジェクト制作へ導く開始ガイド、ガイドの任意再表示を追加 |
 | 2.52 — Workspace Favorites & Contextual Shortcuts | 実装済み | お気に入り操作を設定から選択し、資料未登録・根拠付き回答・プロジェクト紐付けなど現在の状態に応じた次の操作をチャットへ表示 |
 | 2.53 — Workspace Activity & Smart Resume | 実装済み | ワークスペースとお気に入り操作のローカル履歴、上部の再開メニュー、履歴記録の停止・消去を追加 |
+| 2.54 — Workspace Activity Details & Pinned Resume | 実装済み | 作業種別・対象ワークスペース・日時を履歴へ表示し、頻繁に戻る作業を固定して再開メニュー最上部へ表示 |
 
 完了条件:
 
