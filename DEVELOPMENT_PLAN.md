@@ -125,6 +125,7 @@ flowchart LR
 | 2.40 — Coordinator Plan & Conflict Detection | 実装済み | 課題ごとの変更計画・対象パスを保存し、実行中または候補レーンとのパス重複を検出して逐次実行を促す |
 | 2.41 — Coordinator Merge & Integration Review | 実装済み | レビュー済みレーンを依存関係順に比較し、対象範囲・検証結果・実際の変更ファイル重複を統合前に確認 |
 | 2.42 — Coordinator Integration Validation | 実装済み | 適用済みレーンのスナップショットに対して統合確認を保存し、手動根拠とSwift Packageの`swift test`結果を統合後の証跡として記録 |
+| 2.43 — Coordinator Release Readiness | 実装済み | 完成状態、未適用レーン、統合確認、ブロッカー、失敗結果を最終ゲートとして集約し、リリース判断と根拠を保存 |
 
 完了条件:
 

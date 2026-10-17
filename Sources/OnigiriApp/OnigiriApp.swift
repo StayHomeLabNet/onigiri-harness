@@ -901,6 +901,13 @@ private struct VibeIntegrationValidation: Identifiable, Codable, Equatable {
   var checks: [VibeIntegrationValidationCheck]
 }
 
+private struct VibeReleaseReadiness: Codable, Equatable {
+  var assessedAt: Date = Date()
+  var note: String
+  var appliedRunIDs: [UUID]
+  var integrationValidationID: UUID?
+}
+
 private struct VibeProject: Identifiable, Codable, Equatable {
   var archived: Bool = false
   var id: UUID
@@ -923,6 +930,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
   var coordinatorPolicy: VibeCoordinatorPolicy
   var coordinatorPlans: [VibeCoordinatorPlan]
   var integrationValidations: [VibeIntegrationValidation]
+  var releaseReadiness: VibeReleaseReadiness?
   var memory: [VibeProjectMemoryEntry]
   var createdAt: Date
   var updatedAt: Date
@@ -931,7 +939,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     id: UUID = UUID(), archived: Bool = false, title: String, goal: String, audience: String,
     essentialFeatures: [String], constraints: String, completionCriteria: [String], validationSteps: [String] = [], validationResults: [VibeValidationResult] = [], nextStep: String,
     status: VibeProjectStatus = .draft, proposal: VibeBuildProposal? = nil,
-    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(), coordinatorPolicy: VibeCoordinatorPolicy = VibeCoordinatorPolicy(), coordinatorPlans: [VibeCoordinatorPlan] = [], integrationValidations: [VibeIntegrationValidation] = [],
+    buildRuns: [VibeBuildRun] = [], decisions: [String] = [], openItems: [String] = [], issues: [VibeProjectIssue] = [], explicitMemory: VibeExplicitProjectMemory = VibeExplicitProjectMemory(), coordinatorPolicy: VibeCoordinatorPolicy = VibeCoordinatorPolicy(), coordinatorPlans: [VibeCoordinatorPlan] = [], integrationValidations: [VibeIntegrationValidation] = [], releaseReadiness: VibeReleaseReadiness? = nil,
     memory: [VibeProjectMemoryEntry] = [], createdAt: Date = Date(), updatedAt: Date = Date()
   ) {
     self.id = id
@@ -955,6 +963,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
     self.coordinatorPolicy = coordinatorPolicy
     self.coordinatorPlans = coordinatorPlans
     self.integrationValidations = integrationValidations
+    self.releaseReadiness = releaseReadiness
     self.memory = memory
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -962,7 +971,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, archived, title, goal, audience, essentialFeatures, constraints, completionCriteria, nextStep
-    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, coordinatorPolicy, coordinatorPlans, integrationValidations, memory, createdAt, updatedAt
+    case validationSteps, validationResults, status, proposal, buildRuns, decisions, openItems, issues, explicitMemory, coordinatorPolicy, coordinatorPlans, integrationValidations, releaseReadiness, memory, createdAt, updatedAt
   }
 
   init(from decoder: Decoder) throws {
@@ -989,6 +998,7 @@ private struct VibeProject: Identifiable, Codable, Equatable {
       coordinatorPolicy: try values.decodeIfPresent(VibeCoordinatorPolicy.self, forKey: .coordinatorPolicy) ?? VibeCoordinatorPolicy(),
       coordinatorPlans: try values.decodeIfPresent([VibeCoordinatorPlan].self, forKey: .coordinatorPlans) ?? [],
       integrationValidations: try values.decodeIfPresent([VibeIntegrationValidation].self, forKey: .integrationValidations) ?? [],
+      releaseReadiness: try values.decodeIfPresent(VibeReleaseReadiness.self, forKey: .releaseReadiness),
       memory: try values.decodeIfPresent([VibeProjectMemoryEntry].self, forKey: .memory) ?? [],
       createdAt: try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
       updatedAt: try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date())
@@ -7352,6 +7362,7 @@ private struct VibeProjectEditor: View {
   @State private var integrationValidationEvidence = ""
   @State private var integrationValidationRunning = false
   @State private var integrationValidationMessage: String?
+  @State private var releaseReadinessNote = ""
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -7365,6 +7376,7 @@ private struct VibeProjectEditor: View {
     _validationLines = State(initialValue: project.validationSteps.joined(separator: "\n"))
     _proposal = State(initialValue: project.proposal)
     _sourceDirectory = State(initialValue: FileManager.default.homeDirectoryForCurrentUser.path)
+    _releaseReadinessNote = State(initialValue: project.releaseReadiness?.note ?? "")
   }
 
   var body: some View {
@@ -7482,6 +7494,7 @@ private struct VibeProjectEditor: View {
         integrationValidationSection
         validationEvidenceSection
         completionReadinessSection
+        releaseReadinessSection
         handoffSection
         timelineSection
         projectMemorySection
@@ -8233,6 +8246,105 @@ private struct VibeProjectEditor: View {
       .foregroundStyle(complete ? Color.green : .secondary)
   }
 
+  private var releasePendingCoordinatorRuns: [VibeBuildRun] {
+    project.buildRuns.filter { run in
+      run.coordinatorIssueID != nil && run.appliedAt == nil && run.revertedAt == nil
+        && (run.status == "実行中" || run.status == "Running" || run.status == "完了" || run.status == "Completed")
+    }
+  }
+
+  private var releaseIntegrationIsCurrentAndPassed: Bool {
+    let appliedIDs = Set(appliedCoordinatorRuns.map(\.id))
+    guard !appliedIDs.isEmpty else { return true }
+    guard let validation = project.integrationValidations.first else { return false }
+    return Set(validation.appliedRunIDs) == appliedIDs
+      && !validation.checks.isEmpty
+      && validation.checks.allSatisfy { $0.outcome == .passed }
+  }
+
+  private var releaseReadinessIsCurrent: Bool {
+    guard let readiness = project.releaseReadiness else { return false }
+    return Set(readiness.appliedRunIDs) == Set(appliedCoordinatorRuns.map(\.id))
+      && readiness.integrationValidationID == project.integrationValidations.first?.id
+  }
+
+  private var isReadyForRelease: Bool {
+    project.status == .completed
+      && releasePendingCoordinatorRuns.isEmpty
+      && project.activeIssues.filter { $0.kind == .blocker }.isEmpty
+      && !project.validationResults.contains { $0.outcome == .failed }
+      && releaseIntegrationIsCurrentAndPassed
+  }
+
+  private func markReleaseReady() {
+    guard isReadyForRelease else { return }
+    let note = releaseReadinessNote.trimmingCharacters(in: .whitespacesAndNewlines)
+    project.releaseReadiness = VibeReleaseReadiness(
+      note: note,
+      appliedRunIDs: appliedCoordinatorRuns.map(\.id),
+      integrationValidationID: project.integrationValidations.first?.id)
+    recordMemory(kind: "release", detail: english
+      ? "Marked ready for release after coordinator review."
+      : "コーディネーター確認後、リリース可能として記録しました。")
+    saveProjectMemory()
+  }
+
+  private var releaseReadinessSection: some View {
+    GroupBox(english ? "Coordinator release readiness" : "コーディネーター・リリース準備") {
+      VStack(alignment: .leading, spacing: 8) {
+        Text(english
+          ? "Use this final gate before sharing or releasing the integrated project. It records the exact applied lanes and integration validation used for the decision."
+          : "統合済みプロジェクトを共有・リリースする前の最終ゲートです。判断時の適用済みレーンと統合確認を保存します。")
+          .font(.caption).foregroundStyle(.secondary)
+        readinessRow(project.status == .completed, english ? "The project is marked complete" : "プロジェクトが完成として記録されている")
+        readinessRow(releasePendingCoordinatorRuns.isEmpty, english
+          ? "No coordinated lane is running or waiting to be applied"
+          : "実行中または未適用のコーディネーター・レーンがない")
+        readinessRow(project.activeIssues.filter { $0.kind == .blocker }.isEmpty, english
+          ? "No active blockers remain" : "未解決のブロッカーがない")
+        readinessRow(!project.validationResults.contains { $0.outcome == .failed }, english
+          ? "No failed validation remains" : "失敗した確認結果が残っていない")
+        readinessRow(releaseIntegrationIsCurrentAndPassed, english
+          ? "The current integrated lanes passed validation" : "現在の統合済みレーンが確認済み")
+        if !releasePendingCoordinatorRuns.isEmpty {
+          let names = releasePendingCoordinatorRuns.compactMap { run in
+            run.coordinatorIssueID.flatMap { id in project.issues.first { $0.id == id }?.title }
+          }
+          Text(english ? "Waiting: \(names.joined(separator: ", "))" : "待機中: \(names.joined(separator: "、"))")
+            .font(.caption2).foregroundStyle(.orange)
+        }
+        labeledEditor(
+          english ? "Release note (optional)" : "リリースメモ（任意）",
+          english ? "What was verified, what changed, and anything the recipient should know." : "確認したこと、変更内容、受け手へ伝える注意点を記録します。",
+          text: $releaseReadinessNote, minHeight: 48)
+        HStack {
+          Button(english ? "Mark ready for release" : "リリース可能として記録", systemImage: "shippingbox.and.arrow.backward") {
+            markReleaseReady()
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(!isReadyForRelease)
+          if let readiness = project.releaseReadiness {
+            VStack(alignment: .leading, spacing: 1) {
+              Text(releaseReadinessIsCurrent
+                ? (english ? "Release-ready assessment recorded." : "リリース可能の判断を記録済みです。")
+                : (english ? "The assessment is stale; re-check after the latest changes." : "最新の変更に対して再確認が必要です。"))
+                .font(.caption).foregroundStyle(releaseReadinessIsCurrent ? Color.green : Color.orange)
+              Text(readiness.assessedAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(english ? "Clear assessment" : "判断をクリア", systemImage: "xmark.circle") {
+              project.releaseReadiness = nil
+              saveProjectMemory()
+            }
+            .font(.caption)
+          }
+        }
+      }
+      .padding(.top, 4)
+    }
+  }
+
   private func reopenProject() {
     project.archived = false
     project.status = .active
@@ -8314,6 +8426,9 @@ private struct VibeProjectEditor: View {
     let proposalText = proposal.map { "## \(english ? "Build proposal" : "実装提案")\n\($0.overview)" } ?? ""
     let validations = project.validationResults.map { "\($0.outcome.title(english: english)) (\($0.source)): \($0.detail)" }
     let builds = project.buildRuns.map { "\($0.provider.name) · \($0.status): \($0.detail)" }
+    let release = project.releaseReadiness.map {
+      "## \(english ? "Release readiness" : "リリース準備")\n\(english ? "Assessed" : "判断日時"): \($0.assessedAt.formatted(date: .abbreviated, time: .shortened))\n\(english ? "Applied coordinated lanes" : "適用済みコーディネーター・レーン"): \($0.appliedRunIDs.count)\n\($0.note)"
+    } ?? ""
     return """
     # \(project.title.isEmpty ? (english ? "Untitled project" : "名称未設定") : project.title)
 
@@ -8331,6 +8446,8 @@ private struct VibeProjectEditor: View {
     \(list(english ? "Build history" : "ビルド履歴", builds))
 
     \(list(english ? "Open items" : "未解決事項", project.activeIssues.map { $0.summary(english: english) }))
+
+    \(release)
     """
   }
 
@@ -8991,6 +9108,7 @@ private struct VibeProjectEditor: View {
     case "proposal": return "doc.text"
     case "build": return "hammer"
     case "integration": return "checkmark.shield"
+    case "release": return "shippingbox"
     case "apply": return "checkmark.seal"
     case "revert": return "arrow.uturn.backward"
     case "discard": return "trash"
@@ -9212,6 +9330,8 @@ private struct VibeProjectEditor: View {
         project.buildRuns[index].appliedAt = Date()
         project.buildRuns[index].status = "適用済み"
         project.buildRuns[index].detail = "確認済みのパッチを元の作業フォルダへ適用しました。"
+        project.status = .active
+        project.releaseReadiness = nil
         recordMemory(kind: "apply", detail: english ? "Applied the reviewed patch to the original folder." : "確認済みのパッチを元フォルダへ適用しました。")
         reviewMessage = english ? "The reviewed patch was applied to the original folder." : "確認済みのパッチを元フォルダへ適用しました。"
       case .revert:
