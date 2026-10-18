@@ -243,7 +243,12 @@ private struct LocalModelsSettingsView: View {
     }
     .formStyle(.grouped)
     .padding(12)
-    .task { await refresh() }
+    .task {
+      while !Task.isCancelled {
+        await refresh()
+        try? await Task.sleep(for: .seconds(1))
+      }
+    }
   }
 
   @ViewBuilder private func modelRow(_ entry: ManagedLocalModelCatalogEntry, record: ManagedLocalModelRecord?) -> some View {
@@ -267,10 +272,14 @@ private struct LocalModelsSettingsView: View {
           .font(.caption)
         Spacer()
         if state == .notDownloaded || state == .failed {
-          Button(english ? "Download" : "ダウンロード") { Task { await action("/local-models/download", id: entry.id) } }
+          Button(record?.downloadedBytes ?? 0 > 0 ? (english ? "Resume download" : "ダウンロードを再開") : (english ? "Download" : "ダウンロード")) {
+            Task { await action("/local-models/download", id: entry.id) }
+          }
         } else if state == .downloading {
-          ProgressView().controlSize(.small)
-          Text(english ? "Downloading" : "ダウンロード中").font(.caption)
+          ProgressView(value: progress(for: record)).frame(width: 90)
+          Text(progressText(for: record)).font(.caption).monospacedDigit()
+          Button(english ? "Cancel" : "停止") { Task { await action("/local-models/cancel", id: entry.id) } }
+            .controlSize(.small)
         } else {
           Button(english ? "Load and use" : "ロードして利用") { Task { await load(entry.id) } }
             .disabled(response?.runtimeAvailable != true)
@@ -280,9 +289,31 @@ private struct LocalModelsSettingsView: View {
       if state == .loaded {
         Label(english ? "In use for chat" : "チャットで使用中", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
       }
-      if let error = record?.error, state == .failed { Text(error).font(.caption).foregroundStyle(.red) }
+      if let record, state == .downloaded || state == .loaded {
+        VStack(alignment: .leading, spacing: 1) {
+          Text("SHA-256: \(record.sha256 ?? "—")").lineLimit(1)
+          Text(english ? "Pinned revision: \(record.sourceRevision ?? entry.revision)" : "固定リビジョン: \(record.sourceRevision ?? entry.revision)")
+        }
+        .font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+      }
+      if let error = record?.error { Text(error).font(.caption).foregroundStyle(state == .failed ? .red : .secondary) }
+      if entry.recommendedMemoryBytes > (response?.totalMemoryBytes ?? 0) {
+        Label(english ? "This model may exceed available memory." : "このモデルは搭載メモリを超える可能性があります。", systemImage: "exclamationmark.triangle.fill")
+          .font(.caption).foregroundStyle(.orange)
+      }
     }
     .padding(.vertical, 5)
+  }
+
+  private func progress(for record: ManagedLocalModelRecord?) -> Double {
+    guard let record, let total = record.expectedBytes, total > 0 else { return 0 }
+    return min(1, Double(record.downloadedBytes) / Double(total))
+  }
+  private func progressText(for record: ManagedLocalModelRecord?) -> String {
+    guard let record else { return "—" }
+    let current = ByteCountFormatter.string(fromByteCount: record.downloadedBytes, countStyle: .file)
+    guard let total = record.expectedBytes, total > 0 else { return current }
+    return "\(current) / \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))"
   }
 
   private func stateLabel(_ state: ManagedLocalModelState) -> String {
@@ -301,8 +332,10 @@ private struct LocalModelsSettingsView: View {
     do {
       let (data, reply) = try await URLSession.shared.data(from: OnigiriEndpoint.url("local-models"))
       guard (reply as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+      let previousRuntimePath = response?.runtimePath
       let decoded = try JSONDecoder().decode(ManagedLocalModelsResponse.self, from: data)
-      response = decoded; runtimePath = decoded.runtimePath
+      response = decoded
+      if runtimePath.isEmpty || runtimePath == previousRuntimePath { runtimePath = decoded.runtimePath }
     } catch { message = error.localizedDescription }
   }
   private func saveRuntimePath() async {

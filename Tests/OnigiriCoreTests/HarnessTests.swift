@@ -1370,3 +1370,17 @@ private struct CancellableTestSession: ModelConversationSession {
   let provider = ModelProviderFactory.make(from: ProviderConfig(providerID: "onigiri-local"))
   #expect(provider.id == "onigiri-local")
 }
+
+@Test func managedLocalModelsUsePinnedRevisionsAndDecodePriorRecords() throws {
+  #expect(ManagedLocalModelCatalog.entries.allSatisfy { $0.revision.count == 40 && !$0.downloadURL.contains("/resolve/main/") })
+  let original = ManagedLocalModelRecord(id: "example", state: .failed, downloadedBytes: 42, error: "interrupted")
+  var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+  object.removeValue(forKey: "sourceRevision")
+  object.removeValue(forKey: "remoteETag")
+  object.removeValue(forKey: "expectedBytes")
+  let legacyData = try JSONSerialization.data(withJSONObject: object)
+  let decoded = try JSONDecoder().decode(ManagedLocalModelRecord.self, from: legacyData)
+  #expect(decoded.id == "example")
+  #expect(decoded.downloadedBytes == 42)
+  #expect(decoded.sourceRevision == nil)
+}

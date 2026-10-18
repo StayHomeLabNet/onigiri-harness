@@ -74,6 +74,7 @@ flowchart LR
 | 1.8 — Evidence Flight Recorder | 実装済み | 回答時のProfile、モデル、履歴、RAG、引用、遅延を保存 |
 | 1.9 — Counterfactual Replay | 実装済み | 同じ条件を別Profile・RAG設定で独立再実行して比較 |
 | 1.10 — Regression Suites & Reports | 実装済み | 基準ケース、ポリシー、合格・要確認・失敗、Markdown/CSVレポート |
+| 1.11 — Managed Local Model Reliability | 実装済み | 中断後のHTTP Range再開、進捗・停止、固定リビジョン、取得サイズ・ETag・SHA-256の記録、ロード時の応答確認を追加 |
 
 ## Parent Phase 2 — Vibe Build Workspace
 
