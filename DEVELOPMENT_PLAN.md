@@ -140,6 +140,8 @@ flowchart LR
 | 2.55 — Activity Search & Cleanup Policy | 任意・保留 | 作業履歴をキーワード・ワークスペース・期間で検索し、保存件数や保持期間を設定可能にする |
 | 2.56 — Product UX Reset & Task-First Navigation | 実装済み | 入口を「話す」「新しいプロジェクト」「資料を使う」「Webを調べる」に再編し、会話の内容からプロジェクト下書きを作成して同じ制作フローへ接続 |
 | 2.57 — Project Home & Progressive Disclosure | 実装済み | プロジェクトをホーム／計画／作る／確認／履歴／設定に分け、既定のホームに目的・次にすること・進み具合・最近の更新を表示 |
+| 1.6 — Managed Local Models（GGUF / llama.cpp） | 実装済み | Hugging Face公開GGUFの取得・専用保存・削除、llama-serverのloopback起動、通常チャットのOnigiri Local Provider接続を追加 |
+| 1.7 — Local Model Catalog & Hardware Guidance | 実装済み | 容量、量子化、ライセンス、用途、推奨メモリとこのMacの搭載メモリを表示し、モデル選択を支援 |
 
 完了条件:
 

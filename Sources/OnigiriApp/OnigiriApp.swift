@@ -84,6 +84,8 @@ private struct OnigiriSettingsView: View {
         .tabItem { Label("一般", systemImage: "gearshape") }
       WorkspaceSettingsView()
         .tabItem { Label("ワークスペース", systemImage: "rectangle.3.group") }
+      LocalModelsSettingsView()
+        .tabItem { Label("ローカルモデル", systemImage: "cpu") }
       WebResearchSettingsView()
         .tabItem { Label("Webリサーチ", systemImage: "globe") }
     }
@@ -184,6 +186,158 @@ private struct WorkspaceSettingsView: View {
 
   private var favoriteQuickActions: Set<OnigiriQuickAction> {
     OnigiriQuickAction.values(from: favoriteQuickActionsRaw)
+  }
+}
+
+private struct LocalModelsSettingsView: View {
+  @AppStorage("onigiri.uiLanguage") private var languageCode = AppLanguage.japanese.rawValue
+  @AppStorage("onigiri.providerID") private var selectedProviderID = "apple-foundation-models"
+  @AppStorage("onigiri.baseURL") private var baseURL = ""
+  @AppStorage("onigiri.modelID") private var modelID = ""
+  @State private var response: ManagedLocalModelsResponse?
+  @State private var runtimePath = ""
+  @State private var message: String?
+  @State private var loading = false
+
+  private var english: Bool { languageCode == AppLanguage.english.rawValue }
+
+  var body: some View {
+    Form {
+      Section(english ? "Local runtime" : "ローカル実行環境") {
+        TextField(english ? "llama-server path" : "llama-server のパス", text: $runtimePath)
+          .textFieldStyle(.roundedBorder)
+        HStack {
+          Button(english ? "Save runtime path" : "実行環境パスを保存") { Task { await saveRuntimePath() } }
+          if let response {
+            Label(
+              response.runtimeAvailable
+                ? (english ? "llama-server is ready" : "llama-server を利用できます")
+                : (english ? "llama-server was not found" : "llama-server が見つかりません"),
+              systemImage: response.runtimeAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+              .foregroundStyle(response.runtimeAvailable ? .green : .orange)
+          }
+        }
+        Text(english
+          ? "Install llama.cpp separately, then select its llama-server executable. Models remain data files and only the server binds to this Mac's loopback address."
+          : "llama.cppを別途導入し、llama-server実行ファイルを指定します。モデルはデータとして保存し、サーバーはこのMacのloopbackアドレスだけで起動します。")
+          .font(.caption).foregroundStyle(.secondary)
+        Link(english ? "llama.cpp installation guide" : "llama.cpp の導入ガイド", destination: URL(string: "https://github.com/ggml-org/llama.cpp")!)
+          .font(.caption)
+      }
+
+      Section(english ? "Model catalog" : "モデルカタログ") {
+        if let response {
+          Text(english
+            ? "This Mac: \(ByteCountFormatter.string(fromByteCount: response.totalMemoryBytes, countStyle: .memory)). Choose a model whose recommended memory fits comfortably."
+            : "このMacのメモリ: \(ByteCountFormatter.string(fromByteCount: response.totalMemoryBytes, countStyle: .memory))。推奨メモリに余裕があるモデルを選んでください。")
+            .font(.caption).foregroundStyle(.secondary)
+          ForEach(response.catalog) { entry in
+            modelRow(entry, record: response.records.first(where: { $0.id == entry.id }))
+          }
+        } else {
+          ProgressView(english ? "Loading local model catalog…" : "ローカルモデルカタログを読み込み中…")
+        }
+      }
+
+      if let message { Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+    }
+    .formStyle(.grouped)
+    .padding(12)
+    .task { await refresh() }
+  }
+
+  @ViewBuilder private func modelRow(_ entry: ManagedLocalModelCatalogEntry, record: ManagedLocalModelRecord?) -> some View {
+    let state = record?.state ?? .notDownloaded
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text(entry.name).font(.headline)
+          Text("\(entry.publisher) · \(entry.parameterCount) · \(entry.quantization) · \(entry.license)")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        Spacer()
+        Text(stateLabel(state)).font(.caption.weight(.medium)).foregroundStyle(stateColor(state))
+      }
+      Text(english ? entry.useCase.replacingOccurrences(of: "軽量な日常会話・文章作成", with: "Lightweight chat and writing").replacingOccurrences(of: "品質を優先する日常会話・RAG", with: "Higher-quality chat and RAG") : entry.useCase)
+        .font(.caption).foregroundStyle(.secondary)
+      Text("GGUF · \(ByteCountFormatter.string(fromByteCount: entry.downloadBytes, countStyle: .file)) · \(english ? "Recommended memory" : "推奨メモリ"): \(ByteCountFormatter.string(fromByteCount: entry.recommendedMemoryBytes, countStyle: .memory))")
+        .font(.caption).foregroundStyle(.secondary)
+      HStack {
+        Link(english ? "Source and license" : "取得元・ライセンス", destination: URL(string: "https://huggingface.co/\(entry.repository)")!)
+          .font(.caption)
+        Spacer()
+        if state == .notDownloaded || state == .failed {
+          Button(english ? "Download" : "ダウンロード") { Task { await action("/local-models/download", id: entry.id) } }
+        } else if state == .downloading {
+          ProgressView().controlSize(.small)
+          Text(english ? "Downloading" : "ダウンロード中").font(.caption)
+        } else {
+          Button(english ? "Load and use" : "ロードして利用") { Task { await load(entry.id) } }
+            .disabled(response?.runtimeAvailable != true)
+          Button(english ? "Delete" : "削除", role: .destructive) { Task { await action("/local-models/delete", id: entry.id) } }
+        }
+      }
+      if state == .loaded {
+        Label(english ? "In use for chat" : "チャットで使用中", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+      }
+      if let error = record?.error, state == .failed { Text(error).font(.caption).foregroundStyle(.red) }
+    }
+    .padding(.vertical, 5)
+  }
+
+  private func stateLabel(_ state: ManagedLocalModelState) -> String {
+    switch state {
+    case .notDownloaded: return english ? "Not downloaded" : "未取得"
+    case .downloading: return english ? "Downloading" : "取得中"
+    case .downloaded: return english ? "Ready" : "利用可能"
+    case .loaded: return english ? "Loaded" : "ロード済み"
+    case .failed: return english ? "Failed" : "失敗"
+    }
+  }
+  private func stateColor(_ state: ManagedLocalModelState) -> Color {
+    switch state { case .loaded: return .green; case .failed: return .red; case .downloading: return .orange; default: return .secondary }
+  }
+  private func refresh() async {
+    do {
+      let (data, reply) = try await URLSession.shared.data(from: OnigiriEndpoint.url("local-models"))
+      guard (reply as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+      let decoded = try JSONDecoder().decode(ManagedLocalModelsResponse.self, from: data)
+      response = decoded; runtimePath = decoded.runtimePath
+    } catch { message = error.localizedDescription }
+  }
+  private func saveRuntimePath() async {
+    do {
+      let body = try JSONEncoder().encode(ManagedLocalModelRuntimeRequest(runtimePath: runtimePath))
+      _ = try await send(path: "/local-models/runtime", body: body)
+      await refresh()
+    } catch { message = error.localizedDescription }
+  }
+  private func action(_ path: String, id: String) async {
+    do {
+      let body = try JSONEncoder().encode(ManagedLocalModelActionRequest(id: id))
+      _ = try await send(path: path, body: body)
+      await refresh()
+    } catch { message = error.localizedDescription }
+  }
+  private func load(_ id: String) async {
+    do {
+      let body = try JSONEncoder().encode(ManagedLocalModelActionRequest(id: id))
+      let data = try await send(path: "/local-models/load", body: body)
+      let config = try JSONDecoder().decode(ProviderConfig.self, from: data)
+      selectedProviderID = config.providerID; baseURL = config.baseURL ?? ""; modelID = config.modelID ?? ""
+      message = english ? "Loaded. Onigiri Local is now selected for chat." : "ロードしました。Onigiri Local をチャットのモデルとして選択しました。"
+      await refresh()
+    } catch { message = error.localizedDescription }
+  }
+  private func send(path: String, body: Data) async throws -> Data {
+    var request = URLRequest(url: OnigiriEndpoint.url(path)); request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type"); request.httpBody = body
+    let (data, reply) = try await URLSession.shared.data(for: request)
+    guard (reply as? HTTPURLResponse)?.statusCode == 200 else {
+      let error = try? JSONDecoder().decode(APIError.self, from: data)
+      throw StreamError(message: error?.error ?? "Request failed")
+    }
+    return data
   }
 }
 
@@ -3000,7 +3154,7 @@ struct ChatView: View {
   }
 
   private var selectedProviderUsesBaseURL: Bool {
-    ["lmstudio", "lm-studio", "ollama", "openai-compatible"].contains(selectedProviderID)
+    ["lmstudio", "lm-studio", "ollama", "onigiri-local", "openai-compatible"].contains(selectedProviderID)
   }
 
   private var providerSettings: some View {

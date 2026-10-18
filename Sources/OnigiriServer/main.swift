@@ -18,6 +18,7 @@ final class HTTPConnection: @unchecked Sendable {
   let decisionLabManager: DecisionLabManager
   let decisionEvaluationManager: DecisionEvaluationManager
   let compatibilityProfileCatalog: CompatibilityProfileCatalog
+  let managedLocalModelManager: ManagedLocalModelManager
   let apiToken: String?
   var buffer = Data()
   var finished = false
@@ -32,7 +33,7 @@ final class HTTPConnection: @unchecked Sendable {
     _ connection: NWConnection, harness: Harness, codexAgentManager: CodexAgentManager,
     knowledgeToolAuditLog: KnowledgeToolAuditLog, decisionLabManager: DecisionLabManager,
     decisionEvaluationManager: DecisionEvaluationManager,
-    compatibilityProfileCatalog: CompatibilityProfileCatalog, apiToken: String?
+    compatibilityProfileCatalog: CompatibilityProfileCatalog, managedLocalModelManager: ManagedLocalModelManager, apiToken: String?
   ) {
     self.connection = connection
     self.harness = harness
@@ -41,6 +42,7 @@ final class HTTPConnection: @unchecked Sendable {
     self.decisionLabManager = decisionLabManager
     self.decisionEvaluationManager = decisionEvaluationManager
     self.compatibilityProfileCatalog = compatibilityProfileCatalog
+    self.managedLocalModelManager = managedLocalModelManager
     self.apiToken = apiToken
   }
 
@@ -182,6 +184,38 @@ final class HTTPConnection: @unchecked Sendable {
         } catch {
           sendJSON(statusCode(for: error), APIError(error: error.localizedDescription))
         }
+      } else if method == "GET", path == "/local-models" {
+        sendJSON(200, await managedLocalModelManager.snapshot())
+      } else if method == "POST", path == "/local-models/runtime" {
+        guard isJSON(headers), let request = try? JSONDecoder().decode(ManagedLocalModelRuntimeRequest.self, from: body) else {
+          sendJSON(400, APIError(error: "JSON の runtimePath が必要です。")); return
+        }
+        do { sendJSON(200, try await managedLocalModelManager.setRuntimePath(request.runtimePath)) }
+        catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
+      } else if method == "POST", path == "/local-models/download" {
+        guard isJSON(headers), let request = try? JSONDecoder().decode(ManagedLocalModelActionRequest.self, from: body) else {
+          sendJSON(400, APIError(error: "JSON の id が必要です。")); return
+        }
+        do { sendJSON(200, try await managedLocalModelManager.download(id: request.id)) }
+        catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
+      } else if method == "POST", path == "/local-models/load" {
+        guard isJSON(headers), let request = try? JSONDecoder().decode(ManagedLocalModelActionRequest.self, from: body) else {
+          sendJSON(400, APIError(error: "JSON の id が必要です。")); return
+        }
+        do {
+          let config = try await managedLocalModelManager.load(id: request.id)
+          let selected = try await harness.configureProvider(config)
+          sendJSON(200, selected)
+        } catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
+      } else if method == "POST", path == "/local-models/unload" {
+        do { sendJSON(200, try await managedLocalModelManager.unload()) }
+        catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
+      } else if method == "POST", path == "/local-models/delete" {
+        guard isJSON(headers), let request = try? JSONDecoder().decode(ManagedLocalModelActionRequest.self, from: body) else {
+          sendJSON(400, APIError(error: "JSON の id が必要です。")); return
+        }
+        do { sendJSON(200, try await managedLocalModelManager.delete(id: request.id)) }
+        catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
       } else if method == "POST", path == "/provider" {
         guard isJSON(headers),
           let request = try? JSONDecoder().decode(ProviderConfig.self, from: body)
@@ -775,6 +809,9 @@ final class HTTPConnection: @unchecked Sendable {
     case HarnessError.invalidDocument: return 400
     case HarnessError.busy: return 429
     case HarnessError.unavailable: return 503
+    case ManagedLocalModelError.notDownloaded, ManagedLocalModelError.catalogEntryNotFound, ManagedLocalModelError.invalidRuntime: return 400
+    case ManagedLocalModelError.runtimeUnavailable: return 503
+    case ManagedLocalModelError.modelIsDownloading: return 409
     default: return 500
     }
   }
@@ -793,7 +830,7 @@ final class HTTPConnection: @unchecked Sendable {
     let reason =
       [
         200: "OK", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 413: "Content Too Large",
-        429: "Too Many Requests", 500: "Internal Server Error", 502: "Bad Gateway",
+        409: "Conflict", 429: "Too Many Requests", 500: "Internal Server Error", 502: "Bad Gateway",
         503: "Service Unavailable",
       ][status] ?? "Error"
     var response = Data(
@@ -855,6 +892,7 @@ let compatibilityProfileStoreURL =
   environment["ONIGIRI_PROFILE_STORE_URL"].map { URL(fileURLWithPath: $0) }
   ?? CompatibilityProfileCatalog.defaultStoreURL
 let compatibilityProfileCatalog = CompatibilityProfileCatalog(storeURL: compatibilityProfileStoreURL)
+let managedLocalModelManager = ManagedLocalModelManager(rootURL: storageRootURL.appending(path: "local-models", directoryHint: .isDirectory))
 let parameters = NWParameters.tcp
 parameters.requiredLocalEndpoint = .hostPort(
   host: NWEndpoint.Host(requestedHost), port: NWEndpoint.Port(rawValue: port)!)
@@ -864,7 +902,7 @@ listener.newConnectionHandler = {
     $0, harness: harness, codexAgentManager: codexAgentManager,
     knowledgeToolAuditLog: knowledgeToolAuditLog, decisionLabManager: decisionLabManager,
     decisionEvaluationManager: decisionEvaluationManager,
-    compatibilityProfileCatalog: compatibilityProfileCatalog, apiToken: apiToken
+    compatibilityProfileCatalog: compatibilityProfileCatalog, managedLocalModelManager: managedLocalModelManager, apiToken: apiToken
   ).start()
 }
 listener.stateUpdateHandler = { state in

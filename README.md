@@ -50,6 +50,19 @@ export ONIGIRI_MODEL_ID=your-loaded-model
 swift run --scratch-path /tmp/onigiri-harness-build OnigiriServer
 ```
 
+### Onigiri管理のローカルモデル（GGUF）
+
+「Onigiri Harness」→「設定…」→「ローカルモデル」では、Hugging Face の公開GGUFモデルをOnigiri専用の `Application Support/OnigiriHarness/local-models/models` へダウンロードし、削除・ロードできます。カタログには容量、量子化、用途、ライセンス、推奨メモリとこのMacの搭載メモリを表示します。
+
+推論実行には `llama.cpp` の `llama-server` が必要です。Onigiriはモデルの重みを実行可能ファイルとして扱わず、`llama-server` だけを `127.0.0.1:18181` で起動します。`llama-server` を導入後に設定画面で実行ファイルのパスを指定し、モデルの「ロードして利用」を選ぶと、通常チャットのProviderが `Onigiri Local (GGUF)` へ切り替わります。
+
+```sh
+brew install llama.cpp
+# Apple Siliconの標準的なパス: /opt/homebrew/bin/llama-server
+```
+
+モデルごとの利用条件は異なります。「取得元・ライセンス」からHugging Faceのモデルカードを確認してください。初期カタログは公開モデルだけに限定し、gated modelやHugging Faceトークンの入力は扱いません。
+
 Ollama を使う場合は、先に `ollama serve` と `ollama pull` でモデルを用意し、アプリ画面で provider を `Ollama` にして「適用」を押します。
 
 ```sh
@@ -148,6 +161,9 @@ curl --no-buffer --max-time 120 http://127.0.0.1:18080/chat/stream \
 - `GET /providers`: アプリで選べる provider と現在の provider 設定を返します。
 - `POST /provider`: `{"providerID":"lmstudio","baseURL":"http://127.0.0.1:1234/v1","modelID":"..."}` で provider を切り替えます。切り替え時はサーバー上の会話セッションを破棄します。
 - `GET /models`: 現在の provider が返すモデル ID 一覧を返します。Apple Foundation Models では空配列です。
+- `GET /local-models`: Onigiri管理GGUFのカタログ、取得・ロード状態、llama-serverのパス、搭載メモリを返します。
+- `POST /local-models/runtime`: `{"runtimePath":"/path/to/llama-server"}` で実行環境を保存します。
+- `POST /local-models/download`、`POST /local-models/load`、`POST /local-models/unload`、`POST /local-models/delete`: `{"id":"..."}` でモデル取得、loopbackへのロード、解除、削除を行います。
 - `GET /v1/models`: OpenAI互換形式で`onigiri/current`、現在Providerのモデル、`profile/<UUID>`を返します。
 - `POST /v1/chat/completions`: OpenAI互換の非Streaming／SSE Streaming Chat Completionsです。任意の`onigiri`拡張でProfile、RAGモード、検索設定、コンテキスト上限、選択チャンクを指定できます。
 - `GET /agents/status`: Codex、Antigravity、Claude Code CLIの検出結果と実行ファイルの場所を返します。

@@ -1355,3 +1355,18 @@ private struct CancellableTestSession: ModelConversationSession {
   #expect(report.duplicateCases.count == 1)
   #expect(report.duplicateCases[0].firstCaseID == firstCaseID)
 }
+
+@Test func managedLocalModelCatalogProvidesHardwareGuidanceAndProvider() async throws {
+  let root = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appending(path: "OnigiriManagedModelTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let manager = ManagedLocalModelManager(rootURL: root, environment: [:])
+  let snapshot = await manager.snapshot()
+  #expect(snapshot.catalog.count >= 2)
+  #expect(snapshot.catalog.allSatisfy { $0.downloadURL.hasPrefix("https://huggingface.co/") })
+  #expect(snapshot.catalog.allSatisfy { $0.recommendedMemoryBytes >= $0.downloadBytes })
+  #expect(snapshot.loadedModelID == nil)
+  #expect(ModelProviderFactory.options.contains(where: { $0.id == "onigiri-local" }))
+  let provider = ModelProviderFactory.make(from: ProviderConfig(providerID: "onigiri-local"))
+  #expect(provider.id == "onigiri-local")
+}

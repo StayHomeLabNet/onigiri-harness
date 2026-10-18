@@ -408,7 +408,7 @@ public struct ChatStreamEvent: Codable, Sendable, Equatable {
 }
 
 public enum OnigiriServerProtocol {
-  public static let version = "2026-10-05-cli-chat-providers-v1"
+  public static let version = "2026-10-18-managed-local-models-v1"
 }
 
 public struct ServiceStatus: Codable, Sendable {
@@ -1638,6 +1638,7 @@ public enum ModelProviderFactory {
     ProviderOption(id: "apple-foundation-models", name: "Apple Foundation Models"),
     ProviderOption(id: "lmstudio", name: "LM Studio", defaultBaseURL: "http://127.0.0.1:1234/v1"),
     ProviderOption(id: "ollama", name: "Ollama", defaultBaseURL: "http://127.0.0.1:11434/v1"),
+    ProviderOption(id: "onigiri-local", name: "Onigiri Local (GGUF)", defaultBaseURL: ManagedLocalModelManager.runtimeBaseURL),
     ProviderOption(id: "openai-compatible", name: "OpenAI-compatible Local Model"),
     ProviderOption(id: "codex", name: "Codex (CLI)"),
     ProviderOption(id: "antigravity", name: "Antigravity (CLI)"),
@@ -1673,6 +1674,12 @@ public enum ModelProviderFactory {
         baseURL: URL(string: config.baseURL ?? "http://127.0.0.1:11434/v1"),
         configuredModelID: config.modelID
       )
+    case "onigiri-local":
+      return LocalOpenAICompatibleProvider(
+        id: "onigiri-local", name: "Onigiri Local (GGUF)",
+        baseURL: URL(string: config.baseURL ?? ManagedLocalModelManager.runtimeBaseURL),
+        configuredModelID: config.modelID
+      )
     case "openai-compatible":
       return LocalOpenAICompatibleProvider(
         id: "openai-compatible",
@@ -1690,7 +1697,7 @@ public enum ModelProviderFactory {
       return UnavailableModelProvider(
         id: "unknown",
         name: "Unknown Model Provider",
-        detail: "ONIGIRI_MODEL_PROVIDER は apple、lmstudio、ollama、openai-compatible、codex、antigravity、claude-code のいずれかを指定してください。"
+        detail: "ONIGIRI_MODEL_PROVIDER は apple、lmstudio、ollama、onigiri-local、openai-compatible、codex、antigravity、claude-code のいずれかを指定してください。"
       )
     }
   }
