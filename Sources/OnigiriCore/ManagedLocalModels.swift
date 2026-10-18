@@ -113,26 +113,69 @@ public struct ManagedLocalModelBenchmarkResult: Codable, Sendable, Identifiable,
   }
 }
 
+public enum ManagedLocalModelWorkload: String, Codable, Sendable, CaseIterable, Identifiable {
+  case general, grounded, writing, coding
+  public var id: String { rawValue }
+  public var japaneseTitle: String {
+    switch self { case .general: return "日常会話"; case .grounded: return "資料を使う回答"; case .writing: return "文章作成"; case .coding: return "コーディング" }
+  }
+  public var englishTitle: String {
+    switch self { case .general: return "General chat"; case .grounded: return "Grounded answer"; case .writing: return "Writing"; case .coding: return "Coding" }
+  }
+}
+
 public struct ManagedLocalModelBenchmarkRun: Codable, Sendable, Identifiable, Equatable {
   public let id: UUID
   public let modelID: String
+  public let workload: ManagedLocalModelWorkload
   public let startedAt: Date
   public let completedAt: Date
   public let runtimeRSSBytes: Int64?
   public let results: [ManagedLocalModelBenchmarkResult]
   public var passed: Bool { results.allSatisfy(\.passed) && !results.isEmpty }
-  public init(id: UUID = UUID(), modelID: String, startedAt: Date, completedAt: Date, runtimeRSSBytes: Int64?, results: [ManagedLocalModelBenchmarkResult]) {
-    self.id = id; self.modelID = modelID; self.startedAt = startedAt; self.completedAt = completedAt
+  public init(id: UUID = UUID(), modelID: String, workload: ManagedLocalModelWorkload = .general,
+              startedAt: Date, completedAt: Date, runtimeRSSBytes: Int64?, results: [ManagedLocalModelBenchmarkResult]) {
+    self.id = id; self.modelID = modelID; self.workload = workload; self.startedAt = startedAt; self.completedAt = completedAt
     self.runtimeRSSBytes = runtimeRSSBytes; self.results = results
+  }
+  private enum CodingKeys: String, CodingKey { case id, modelID, workload, startedAt, completedAt, runtimeRSSBytes, results }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    id = try values.decode(UUID.self, forKey: .id); modelID = try values.decode(String.self, forKey: .modelID)
+    workload = try values.decodeIfPresent(ManagedLocalModelWorkload.self, forKey: .workload) ?? .general
+    startedAt = try values.decode(Date.self, forKey: .startedAt); completedAt = try values.decode(Date.self, forKey: .completedAt)
+    runtimeRSSBytes = try values.decodeIfPresent(Int64.self, forKey: .runtimeRSSBytes)
+    results = try values.decode([ManagedLocalModelBenchmarkResult].self, forKey: .results)
   }
 }
 
 public enum ManagedLocalModelAcceptanceSuite {
-  public static let cases: [ManagedLocalModelBenchmarkCase] = [
-    .init(id: "ja-short", language: "Japanese", prompt: "次の文を一文で要約してください。Onigiri Harness はローカルでAIと資料を扱うmacOSアプリです。"),
-    .init(id: "en-short", language: "English", prompt: "Reply in one sentence: What is the purpose of a local AI harness?")
-  ]
+  public static func cases(for workload: ManagedLocalModelWorkload) -> [ManagedLocalModelBenchmarkCase] {
+    switch workload {
+    case .general:
+      return [
+        .init(id: "ja-short", language: "Japanese", prompt: "次の文を一文で要約してください。Onigiri Harness はローカルでAIと資料を扱うmacOSアプリです。"),
+        .init(id: "en-short", language: "English", prompt: "Reply in one sentence: What is the purpose of a local AI harness?")
+      ]
+    case .grounded:
+      return [
+        .init(id: "ja-grounded", language: "Japanese", prompt: "次の資料だけを根拠に、一文で答えてください。資料: Onigiri HarnessはmacOSで動くローカルAIアプリです。質問: Onigiri HarnessはどのOSで動きますか？"),
+        .init(id: "en-grounded", language: "English", prompt: "Use only this source and answer in one sentence. Source: Onigiri Harness runs locally on macOS. Question: Where does it run?")
+      ]
+    case .writing:
+      return [
+        .init(id: "ja-writing", language: "Japanese", prompt: "丁寧で短い案内文を二文で書いてください。内容: ローカルモデルのダウンロードが完了しました。"),
+        .init(id: "en-writing", language: "English", prompt: "Write a friendly two-sentence notice that a local model download has completed.")
+      ]
+    case .coding:
+      return [
+        .init(id: "swift-code", language: "English", prompt: "Write a concise Swift function named isEven that accepts Int and returns Bool. Include only code."),
+        .init(id: "explain-code", language: "Japanese", prompt: "Swiftの `let names = [\"A\", \"B\"]` が何を作るか、一文で説明してください。")
+      ]
+    }
+  }
 }
+
 
 public struct ManagedLocalModelComparisonRow: Codable, Sendable, Identifiable, Equatable {
   public let modelID: String
@@ -198,15 +241,17 @@ public struct ManagedLocalModelsResponse: Codable, Sendable {
   public let totalMemoryBytes: Int64
   public let loadedModelID: String?
   public let benchmarks: [ManagedLocalModelBenchmarkRun]
-  public let comparison: ManagedLocalModelComparisonReport
+  public let comparisons: [String: ManagedLocalModelComparisonReport]
 
   public init(catalog: [ManagedLocalModelCatalogEntry], records: [ManagedLocalModelRecord], runtimePath: String,
               runtimeAvailable: Bool, totalMemoryBytes: Int64, loadedModelID: String?, benchmarks: [ManagedLocalModelBenchmarkRun] = [],
-              comparison: ManagedLocalModelComparisonReport? = nil) {
+              comparisons: [String: ManagedLocalModelComparisonReport]? = nil) {
     self.catalog = catalog; self.records = records; self.runtimePath = runtimePath
     self.runtimeAvailable = runtimeAvailable; self.totalMemoryBytes = totalMemoryBytes; self.loadedModelID = loadedModelID
     self.benchmarks = benchmarks
-    self.comparison = comparison ?? ManagedLocalModelComparison.make(catalog: catalog, benchmarks: benchmarks, totalMemoryBytes: totalMemoryBytes)
+    self.comparisons = comparisons ?? Dictionary(uniqueKeysWithValues: ManagedLocalModelWorkload.allCases.map { workload in
+      (workload.rawValue, ManagedLocalModelComparison.make(catalog: catalog, benchmarks: benchmarks.filter { $0.workload == workload }, totalMemoryBytes: totalMemoryBytes))
+    })
   }
 }
 
@@ -221,6 +266,11 @@ public struct ManagedLocalModelRuntimeRequest: Codable, Sendable {
 public struct ManagedLocalModelRecoveryRequest: Codable, Sendable {
   public let id: String
   public init(id: String) { self.id = id }
+}
+public struct ManagedLocalModelBenchmarkRequest: Codable, Sendable {
+  public let id: String
+  public let workload: ManagedLocalModelWorkload
+  public init(id: String, workload: ManagedLocalModelWorkload = .general) { self.id = id; self.workload = workload }
 }
 
 public enum ManagedLocalModelError: LocalizedError {
@@ -289,8 +339,10 @@ public actor ManagedLocalModelManager {
       runtimePath: runtimePath, runtimeAvailable: FileManager.default.isExecutableFile(atPath: runtimePath),
       totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory), loadedModelID: loadedModelID,
       benchmarks: benchmarks.sorted { $0.completedAt > $1.completedAt },
-      comparison: ManagedLocalModelComparison.make(catalog: ManagedLocalModelCatalog.entries, benchmarks: benchmarks,
-                                                   totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory)))
+      comparisons: Dictionary(uniqueKeysWithValues: ManagedLocalModelWorkload.allCases.map { workload in
+        (workload.rawValue, ManagedLocalModelComparison.make(catalog: ManagedLocalModelCatalog.entries,
+          benchmarks: benchmarks.filter { $0.workload == workload }, totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory)))
+      }))
   }
 
   public func setRuntimePath(_ path: String) throws -> ManagedLocalModelsResponse {
@@ -374,12 +426,12 @@ public actor ManagedLocalModelManager {
     return ProviderConfig(providerID: "onigiri-local", baseURL: Self.runtimeBaseURL)
   }
 
-  public func benchmark(id: String) async throws -> ManagedLocalModelBenchmarkRun {
+  public func benchmark(id: String, workload: ManagedLocalModelWorkload = .general) async throws -> ManagedLocalModelBenchmarkRun {
     guard loadedModelID == id, runtimeProcess?.isRunning == true else { throw ManagedLocalModelError.modelNotLoaded }
     let startedAt = Date()
     let modelID = try await runtimeModelID()
     var results: [ManagedLocalModelBenchmarkResult] = []
-    for testCase in ManagedLocalModelAcceptanceSuite.cases {
+    for testCase in ManagedLocalModelAcceptanceSuite.cases(for: workload) {
       let caseStartedAt = Date()
       do {
         let response = try await complete(prompt: testCase.prompt, modelID: modelID)
@@ -394,7 +446,7 @@ public actor ManagedLocalModelManager {
                              responseCharacters: 0, passed: false, error: error.localizedDescription))
       }
     }
-    let run = ManagedLocalModelBenchmarkRun(modelID: id, startedAt: startedAt, completedAt: Date(),
+    let run = ManagedLocalModelBenchmarkRun(modelID: id, workload: workload, startedAt: startedAt, completedAt: Date(),
                                              runtimeRSSBytes: runtimeRSSBytes(), results: results)
     benchmarks.insert(run, at: 0)
     benchmarks = Array(benchmarks.prefix(20))

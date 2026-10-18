@@ -198,6 +198,7 @@ private struct LocalModelsSettingsView: View {
   @State private var runtimePath = ""
   @State private var message: String?
   @State private var loading = false
+  @State private var selectedWorkload: ManagedLocalModelWorkload = .general
 
   private var english: Bool { languageCode == AppLanguage.english.rawValue }
 
@@ -225,9 +226,20 @@ private struct LocalModelsSettingsView: View {
           .font(.caption)
       }
 
-      if let response, !response.comparison.rows.isEmpty {
+      Section(english ? "Workload profile" : "用途プロファイル") {
+        Picker(english ? "Workload" : "用途", selection: $selectedWorkload) {
+          ForEach(ManagedLocalModelWorkload.allCases) { workload in
+            Text(english ? workload.englishTitle : workload.japaneseTitle).tag(workload)
+          }
+        }
+        .pickerStyle(.segmented)
+        Text(english ? "Acceptance and comparison use the selected workload." : "受入テストと比較は、選択した用途ごとに保存・表示します。")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+
+      if let response, let report = response.comparisons[selectedWorkload.rawValue], !report.rows.isEmpty {
         Section(english ? "Comparison and recommendation" : "比較とおすすめ") {
-          comparisonSummary(response)
+          comparisonSummary(response, report: report)
         }
       }
 
@@ -257,8 +269,7 @@ private struct LocalModelsSettingsView: View {
     }
   }
 
-  @ViewBuilder private func comparisonSummary(_ response: ManagedLocalModelsResponse) -> some View {
-    let report = response.comparison
+  @ViewBuilder private func comparisonSummary(_ response: ManagedLocalModelsResponse, report: ManagedLocalModelComparisonReport) -> some View {
     if let generalID = report.recommendedGeneralModelID,
        let entry = response.catalog.first(where: { $0.id == generalID }) {
       Label(english ? "Recommended for this Mac: \(entry.name)" : "このMacへのおすすめ: \(entry.name)", systemImage: "star.circle.fill")
@@ -325,7 +336,7 @@ private struct LocalModelsSettingsView: View {
           Button(english ? "Delete" : "削除", role: .destructive) { Task { await action("/local-models/delete", id: entry.id) } }
         }
       }
-      if response?.comparison.recommendedGeneralModelID == entry.id {
+      if response?.comparisons[selectedWorkload.rawValue]?.recommendedGeneralModelID == entry.id {
         Label(english ? "Recommended for this Mac" : "このMacへのおすすめ", systemImage: "star.fill")
           .font(.caption).foregroundStyle(.green)
       }
@@ -336,7 +347,7 @@ private struct LocalModelsSettingsView: View {
             .controlSize(.small).disabled(loading)
         }
       }
-      if let run = response?.benchmarks.first(where: { $0.modelID == entry.id }) {
+      if let run = response?.benchmarks.first(where: { $0.modelID == entry.id && $0.workload == selectedWorkload }) {
         benchmarkSummary(run)
       }
       if let record, state == .downloaded || state == .loaded {
@@ -424,12 +435,13 @@ private struct LocalModelsSettingsView: View {
     loading = true
     defer { loading = false }
     do {
-      let body = try JSONEncoder().encode(ManagedLocalModelActionRequest(id: id))
+      let body = try JSONEncoder().encode(ManagedLocalModelBenchmarkRequest(id: id, workload: selectedWorkload))
       let data = try await send(path: "/local-models/benchmark", body: body)
       let run = try JSONDecoder().decode(ManagedLocalModelBenchmarkRun.self, from: data)
+      let title = english ? run.workload.englishTitle : run.workload.japaneseTitle
       message = run.passed
-        ? (english ? "Acceptance completed successfully." : "受入テストが完了しました。")
-        : (english ? "Acceptance completed; review the failed case." : "受入テストが完了しました。失敗したケースを確認してください。")
+        ? (english ? "\(title) acceptance completed successfully." : "\(title)の受入テストが完了しました。")
+        : (english ? "\(title) acceptance completed; review the failed case." : "\(title)の受入テストが完了しました。失敗したケースを確認してください。")
       await refresh()
     } catch { message = error.localizedDescription }
   }

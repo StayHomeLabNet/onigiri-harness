@@ -1385,8 +1385,14 @@ private struct CancellableTestSession: ModelConversationSession {
   #expect(decoded.sourceRevision == nil)
 }
 
-@Test func localModelAcceptanceSuiteRequiresLoadedModelAndDefinesBothLanguages() async throws {
-  #expect(Set(ManagedLocalModelAcceptanceSuite.cases.map(\.language)) == Set(["Japanese", "English"]))
+@Test func localModelWorkloadProfilesDefineCasesForBothLanguages() async throws {
+  #expect(ManagedLocalModelWorkload.allCases.count == 4)
+  for workload in ManagedLocalModelWorkload.allCases {
+    let cases = ManagedLocalModelAcceptanceSuite.cases(for: workload)
+    #expect(cases.count == 2)
+    #expect(Set(cases.map(\.language)) == Set(["Japanese", "English"]))
+  }
+  #expect(ManagedLocalModelAcceptanceSuite.cases(for: .coding).contains(where: { $0.id == "swift-code" }))
   let root = URL(fileURLWithPath: NSTemporaryDirectory())
     .appending(path: "OnigiriLocalBenchmarkTests-\(UUID().uuidString)", directoryHint: .isDirectory)
   defer { try? FileManager.default.removeItem(at: root) }
@@ -1398,6 +1404,21 @@ private struct CancellableTestSession: ModelConversationSession {
     guard case .modelNotLoaded = error else { Issue.record("Unexpected error: \(error)"); return }
   }
   #expect((await manager.snapshot()).benchmarks.isEmpty)
+}
+
+@Test func localModelWorkloadComparisonsRemainSeparateAndLegacyRunsDefaultToGeneral() throws {
+  let catalog = ManagedLocalModelCatalog.entries
+  let success = ManagedLocalModelBenchmarkResult(id: "case", language: "English", elapsedMilliseconds: 100, responseCharacters: 20, passed: true)
+  let general = ManagedLocalModelBenchmarkRun(modelID: catalog[0].id, workload: .general, startedAt: Date(), completedAt: Date(), runtimeRSSBytes: 2_000_000_000, results: [success])
+  let coding = ManagedLocalModelBenchmarkRun(modelID: catalog[1].id, workload: .coding, startedAt: Date(), completedAt: Date(), runtimeRSSBytes: 3_000_000_000, results: [success])
+  let response = ManagedLocalModelsResponse(catalog: catalog, records: [], runtimePath: "", runtimeAvailable: false,
+                                            totalMemoryBytes: 16_000_000_000, loadedModelID: nil, benchmarks: [general, coding])
+  #expect(response.comparisons["general"]?.recommendedGeneralModelID == catalog[0].id)
+  #expect(response.comparisons["coding"]?.recommendedGeneralModelID == catalog[1].id)
+  var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(general)) as? [String: Any])
+  object.removeValue(forKey: "workload")
+  let legacy = try JSONDecoder().decode(ManagedLocalModelBenchmarkRun.self, from: JSONSerialization.data(withJSONObject: object))
+  #expect(legacy.workload == .general)
 }
 
 @Test func localModelComparisonRecommendsPassedModelThatFitsMemory() {
