@@ -8141,6 +8141,34 @@ private enum VibeProjectStage: String, CaseIterable, Identifiable {
   }
 }
 
+private enum VibeProjectSection: String, CaseIterable, Identifiable {
+  case home, plan, build, verify, history, settings
+
+  var id: String { rawValue }
+
+  func title(english: Bool) -> String {
+    switch self {
+    case .home: return english ? "Home" : "ホーム"
+    case .plan: return english ? "Plan" : "計画"
+    case .build: return english ? "Build" : "作る"
+    case .verify: return english ? "Verify" : "確認"
+    case .history: return english ? "History" : "履歴"
+    case .settings: return english ? "Settings" : "設定"
+    }
+  }
+
+  var symbol: String {
+    switch self {
+    case .home: return "house"
+    case .plan: return "checklist"
+    case .build: return "hammer"
+    case .verify: return "checkmark.seal"
+    case .history: return "clock.arrow.circlepath"
+    case .settings: return "gearshape"
+    }
+  }
+}
+
 private struct VibeProjectEditor: View {
   let sourceProject: VibeProject
   let english: Bool
@@ -8196,7 +8224,7 @@ private struct VibeProjectEditor: View {
   @State private var releasePackageMessage: String?
   @State private var comparisonBaseReleaseID: UUID?
   @State private var comparisonTargetReleaseID: UUID?
-  @State private var selectedProjectStage: VibeProjectStage = .define
+  @State private var selectedProjectSection: VibeProjectSection = .home
 
   init(project: VibeProject, english: Bool, save: @escaping (VibeProject) -> Void,
        delete: (() -> Void)?) {
@@ -8232,12 +8260,14 @@ private struct VibeProjectEditor: View {
           .pickerStyle(.menu)
         }
 
-        projectStagePicker
-        projectHealthSection
+        projectSectionPicker
 
-        if selectedProjectStage == .define {
+        if selectedProjectSection == .home {
+          projectHomeSection
+        }
+
+        if selectedProjectSection == .plan {
           buildGuideSection
-          explicitMemorySection
 
         GroupBox(english ? "Start with a template" : "テンプレートから始める") {
           VStack(alignment: .leading, spacing: 9) {
@@ -8325,30 +8355,34 @@ private struct VibeProjectEditor: View {
 
         }
 
-        if selectedProjectStage == .plan {
+        if selectedProjectSection == .plan {
           proposalSection
           projectCoordinatorSection
           projectMemorySection
         }
 
-        if selectedProjectStage == .implement {
+        if selectedProjectSection == .build {
           guidedBuildSection
         }
 
-        if selectedProjectStage == .integrate {
+        if selectedProjectSection == .verify {
           reviewSection
           integrationReviewSection
           integrationValidationSection
           validationEvidenceSection
+          completionReadinessSection
         }
 
-        if selectedProjectStage == .release {
-          completionReadinessSection
-          releaseReadinessSection
-          releaseHistorySection
-          releaseComparisonSection
+        if selectedProjectSection == .history {
           handoffSection
           timelineSection
+          releaseHistorySection
+          releaseComparisonSection
+        }
+
+        if selectedProjectSection == .settings {
+          explicitMemorySection
+          releaseReadinessSection
         }
 
         HStack {
@@ -8390,42 +8424,154 @@ private struct VibeProjectEditor: View {
     }
   }
 
-  private var projectStagePicker: some View {
-    VStack(alignment: .leading, spacing: 5) {
-      GeometryReader { proxy in
-        if proxy.size.width >= 640 {
-          Picker(english ? "Build stage" : "制作ステージ", selection: $selectedProjectStage) {
-            ForEach(VibeProjectStage.allCases) { stage in
-              Text(stage.title(english: english)).tag(stage)
-            }
-          }
-          .pickerStyle(.segmented)
-          .labelsHidden()
-          .accessibilityLabel(english ? "Build stage" : "制作ステージ")
-        } else {
-          Menu {
-            ForEach(VibeProjectStage.allCases) { stage in
-              Button {
-                selectedProjectStage = stage
-              } label: {
-                Label(stage.title(english: english), systemImage: stage == selectedProjectStage ? "checkmark" : "circle")
-              }
-            }
-          } label: {
-            Label(selectedProjectStage.title(english: english), systemImage: "list.number")
-              .frame(maxWidth: .infinity, alignment: .leading)
-          }
-          .accessibilityLabel(english ? "Choose build stage" : "制作ステージを選択")
+  private var projectSectionPicker: some View {
+    ViewThatFits(in: .horizontal) {
+      Picker(english ? "Project area" : "プロジェクトの画面", selection: $selectedProjectSection) {
+        ForEach(VibeProjectSection.allCases) { section in
+          Label(section.title(english: english), systemImage: section.symbol).tag(section)
         }
       }
-      .frame(height: 28)
-      Text(selectedProjectStage.summary(english: english))
-        .font(.caption)
-        .foregroundStyle(.secondary)
+      .pickerStyle(.segmented)
+      .labelsHidden()
+      .accessibilityLabel(english ? "Project area" : "プロジェクトの画面")
+
+      Menu {
+        ForEach(VibeProjectSection.allCases) { section in
+          Button {
+            selectedProjectSection = section
+          } label: {
+            Label(section.title(english: english), systemImage: section == selectedProjectSection ? "checkmark" : section.symbol)
+          }
+        }
+      } label: {
+        Label(selectedProjectSection.title(english: english), systemImage: selectedProjectSection.symbol)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
     }
     .padding(10)
     .background(Color.accentColor.opacity(0.08))
     .clipShape(RoundedRectangle(cornerRadius: 10))
+  }
+
+  private var projectHomeNext: (title: String, detail: String, section: VibeProjectSection) {
+    let hasGoal = !project.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    if !hasGoal {
+      return (english ? "Describe what you want to make" : "作りたいものを書く",
+              english ? "Add a short goal so Onigiri can help plan the project." : "短い目標を書くと、計画づくりを始められます。", .plan)
+    }
+    if proposal?.status != .approved {
+      return (english ? "Review the build plan" : "作る計画を確認する",
+              english ? "Create or approve the plain-language build plan." : "作る内容を確認してから、実装へ進みます。", .plan)
+    }
+    if project.buildRuns.isEmpty {
+      return (english ? "Start the first build" : "最初の制作を始める",
+              english ? "Choose a source folder and let an AI work in an isolated copy." : "作業元を選び、AIに隔離環境で作業を依頼します。", .build)
+    }
+    if project.validationResults.isEmpty || project.validationResults.contains(where: { $0.outcome != .passed }) {
+      return (english ? "Check the latest result" : "最新の結果を確認する",
+              english ? "Review changes and record what passed or needs attention." : "変更を確認し、できたことと要確認のことを記録します。", .verify)
+    }
+    return (english ? "Review project readiness" : "完成の準備状況を確認する",
+            english ? "Use the checks and evidence to decide the next step." : "確認結果と根拠から、次の判断をします。", .verify)
+  }
+
+  private var projectHomeSection: some View {
+    let next = projectHomeNext
+    return VStack(alignment: .leading, spacing: 12) {
+      GroupBox(english ? "Project goal" : "このプロジェクトの目的") {
+        VStack(alignment: .leading, spacing: 6) {
+          Text(project.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (english ? "No goal has been written yet." : "まだ目的が書かれていません。")
+            : project.goal)
+            .font(project.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .body : .body.weight(.medium))
+            .foregroundStyle(project.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .primary)
+          if !project.audience.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Label(english ? "For: \(project.audience)" : "対象: \(project.audience)", systemImage: "person")
+              .font(.caption).foregroundStyle(.secondary)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 3)
+      }
+
+      GroupBox(english ? "Next step" : "次にすること") {
+        HStack(alignment: .center, spacing: 12) {
+          Image(systemName: next.section.symbol)
+            .font(.title2)
+            .foregroundStyle(Color.accentColor)
+          VStack(alignment: .leading, spacing: 3) {
+            Text(next.title).font(.headline)
+            Text(project.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? next.detail : project.nextStep)
+              .font(.caption).foregroundStyle(.secondary)
+          }
+          Spacer()
+          Button(english ? "Open" : "開く", systemImage: "arrow.right.circle.fill") {
+            selectedProjectSection = next.section
+          }
+          .buttonStyle(.borderedProminent)
+        }
+        .padding(.top, 3)
+      }
+
+      GroupBox(english ? "Progress" : "進み具合") {
+        HStack(spacing: 10) {
+          projectProgressItem(
+            title: english ? "Plan" : "計画",
+            complete: !project.goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && proposal?.status == .approved,
+            current: proposal?.status != .approved)
+          projectProgressItem(
+            title: english ? "Build" : "制作",
+            complete: !project.buildRuns.isEmpty,
+            current: proposal?.status == .approved && project.buildRuns.isEmpty)
+          projectProgressItem(
+            title: english ? "Verify" : "確認",
+            complete: project.validationResults.contains { $0.outcome == .passed },
+            current: !project.buildRuns.isEmpty && !project.validationResults.contains { $0.outcome == .passed })
+        }
+        .padding(.top, 3)
+      }
+
+      GroupBox(english ? "Recent updates" : "最近の更新") {
+        if project.memory.isEmpty {
+          Text(english ? "Updates will appear as you plan, build, and review." : "計画、制作、確認を進めると、ここに更新が表示されます。")
+            .font(.caption).foregroundStyle(.secondary)
+        } else {
+          ForEach(project.memory.prefix(3)) { entry in
+            HStack(alignment: .top, spacing: 7) {
+              Image(systemName: memorySymbol(for: entry.kind)).foregroundStyle(.secondary)
+              VStack(alignment: .leading, spacing: 1) {
+                Text(entry.detail).font(.caption).lineLimit(2)
+                Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                  .font(.caption2).foregroundStyle(.secondary)
+              }
+            }
+          }
+        }
+      }
+
+      HStack {
+        Button(english ? "Plan" : "計画", systemImage: "checklist") { selectedProjectSection = .plan }
+        Button(english ? "Build" : "作る", systemImage: "hammer") { selectedProjectSection = .build }
+        Button(english ? "Verify" : "確認", systemImage: "checkmark.seal") { selectedProjectSection = .verify }
+        Button(english ? "History" : "履歴", systemImage: "clock.arrow.circlepath") { selectedProjectSection = .history }
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+    }
+  }
+
+  private func projectProgressItem(title: String, complete: Bool, current: Bool) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Label(title, systemImage: complete ? "checkmark.circle.fill" : current ? "circle.inset.filled" : "circle")
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(complete ? Color.green : current ? Color.accentColor : .secondary)
+      Text(complete ? (english ? "Done" : "完了") : current ? (english ? "In progress" : "進行中") : (english ? "Later" : "これから"))
+        .font(.caption2).foregroundStyle(.secondary)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(8)
+    .background(Color.secondary.opacity(current ? 0.12 : 0.06))
+    .clipShape(RoundedRectangle(cornerRadius: 8))
   }
 
   private var buildGuideSection: some View {
