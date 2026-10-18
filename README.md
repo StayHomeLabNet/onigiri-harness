@@ -65,6 +65,8 @@ brew install llama.cpp
 
 ダウンロードは中断しても次回「ダウンロードを再開」でHTTP Rangeから継続できます。取得中は進捗と転送量を表示し、停止しても未完了ファイルを保持します。完了時にはGGUFヘッダー、固定Hub revision、応答ETag、SHA-256を記録し、ロード時は`/v1/models`の応答を確認してからチャットへ切り替えます。
 
+ロード済みモデルでは「受入テストを実行」を選べます。日本語・英語それぞれの短いケースを実行し、ケースごとの成否、応答時間、出力量、推論プロセスのRSSを保存します。これはモデル品質を保証するものではなく、このMac上でロード・応答・基本的な多言語出力が成立するかを比較するためのローカル記録です。
+
 
 Ollama を使う場合は、先に `ollama serve` と `ollama pull` でモデルを用意し、アプリ画面で provider を `Ollama` にして「適用」を押します。
 
@@ -167,6 +169,7 @@ curl --no-buffer --max-time 120 http://127.0.0.1:18080/chat/stream \
 - `GET /local-models`: Onigiri管理GGUFのカタログ、取得・ロード状態、llama-serverのパス、搭載メモリを返します。
 - `POST /local-models/runtime`: `{"runtimePath":"/path/to/llama-server"}` で実行環境を保存します。
 - `POST /local-models/download`、`POST /local-models/cancel`、`POST /local-models/load`、`POST /local-models/unload`、`POST /local-models/delete`: `{"id":"..."}` でモデル取得、loopbackへのロード、解除、削除を行います。
+- `POST /local-models/benchmark`: ロード済みモデルへ日英の受入ケースを送り、結果・遅延・RSSを保存して返します。
 - `GET /v1/models`: OpenAI互換形式で`onigiri/current`、現在Providerのモデル、`profile/<UUID>`を返します。
 - `POST /v1/chat/completions`: OpenAI互換の非Streaming／SSE Streaming Chat Completionsです。任意の`onigiri`拡張でProfile、RAGモード、検索設定、コンテキスト上限、選択チャンクを指定できます。
 - `GET /agents/status`: Codex、Antigravity、Claude Code CLIの検出結果と実行ファイルの場所を返します。

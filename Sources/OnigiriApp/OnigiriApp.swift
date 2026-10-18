@@ -287,7 +287,14 @@ private struct LocalModelsSettingsView: View {
         }
       }
       if state == .loaded {
-        Label(english ? "In use for chat" : "チャットで使用中", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+        HStack(spacing: 8) {
+          Label(english ? "In use for chat" : "チャットで使用中", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+          Button(english ? "Run acceptance" : "受入テストを実行") { Task { await benchmark(entry.id) } }
+            .controlSize(.small).disabled(loading)
+        }
+      }
+      if let run = response?.benchmarks.first(where: { $0.modelID == entry.id }) {
+        benchmarkSummary(run)
       }
       if let record, state == .downloaded || state == .loaded {
         VStack(alignment: .leading, spacing: 1) {
@@ -303,6 +310,24 @@ private struct LocalModelsSettingsView: View {
       }
     }
     .padding(.vertical, 5)
+  }
+
+  @ViewBuilder private func benchmarkSummary(_ run: ManagedLocalModelBenchmarkRun) -> some View {
+    let passed = run.passed
+    let totalMilliseconds = run.results.reduce(0) { $0 + $1.elapsedMilliseconds }
+    VStack(alignment: .leading, spacing: 2) {
+      Label(
+        passed ? (english ? "Latest acceptance passed" : "直近の受入テストに合格") : (english ? "Latest acceptance needs attention" : "直近の受入テストは要確認"),
+        systemImage: passed ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+        .foregroundStyle(passed ? .green : .orange)
+      Text(english
+        ? "\(run.results.filter(\.passed).count)/\(run.results.count) cases · \(totalMilliseconds) ms · RSS \(run.runtimeRSSBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory) } ?? "—")"
+        : "\(run.results.filter(\.passed).count)/\(run.results.count) 件 · \(totalMilliseconds) ms · RSS \(run.runtimeRSSBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory) } ?? "—")")
+      ForEach(run.results) { result in
+        Text("\(result.language): \(result.passed ? "✓" : "!") \(result.elapsedMilliseconds) ms · \(result.responseCharacters) \(english ? "characters" : "文字")")
+      }
+    }
+    .font(.caption).foregroundStyle(.secondary)
   }
 
   private func progress(for record: ManagedLocalModelRecord?) -> Double {
@@ -352,6 +377,20 @@ private struct LocalModelsSettingsView: View {
       await refresh()
     } catch { message = error.localizedDescription }
   }
+  private func benchmark(_ id: String) async {
+    loading = true
+    defer { loading = false }
+    do {
+      let body = try JSONEncoder().encode(ManagedLocalModelActionRequest(id: id))
+      let data = try await send(path: "/local-models/benchmark", body: body)
+      let run = try JSONDecoder().decode(ManagedLocalModelBenchmarkRun.self, from: data)
+      message = run.passed
+        ? (english ? "Acceptance completed successfully." : "受入テストが完了しました。")
+        : (english ? "Acceptance completed; review the failed case." : "受入テストが完了しました。失敗したケースを確認してください。")
+      await refresh()
+    } catch { message = error.localizedDescription }
+  }
+
   private func load(_ id: String) async {
     do {
       let body = try JSONEncoder().encode(ManagedLocalModelActionRequest(id: id))

@@ -213,6 +213,12 @@ final class HTTPConnection: @unchecked Sendable {
           let selected = try await harness.configureProvider(config)
           sendJSON(200, selected)
         } catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
+      } else if method == "POST", path == "/local-models/benchmark" {
+        guard isJSON(headers), let request = try? JSONDecoder().decode(ManagedLocalModelActionRequest.self, from: body) else {
+          sendJSON(400, APIError(error: "JSON の id が必要です。")); return
+        }
+        do { sendJSON(200, try await managedLocalModelManager.benchmark(id: request.id)) }
+        catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
       } else if method == "POST", path == "/local-models/unload" {
         do { sendJSON(200, try await managedLocalModelManager.unload()) }
         catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
@@ -817,7 +823,7 @@ final class HTTPConnection: @unchecked Sendable {
     case HarnessError.unavailable: return 503
     case ManagedLocalModelError.notDownloaded, ManagedLocalModelError.catalogEntryNotFound, ManagedLocalModelError.invalidRuntime: return 400
     case ManagedLocalModelError.runtimeUnavailable: return 503
-    case ManagedLocalModelError.modelIsDownloading: return 409
+    case ManagedLocalModelError.modelIsDownloading, ManagedLocalModelError.modelNotLoaded: return 409
     default: return 500
     }
   }

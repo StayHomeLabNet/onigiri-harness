@@ -93,6 +93,47 @@ public struct ManagedLocalModelRecord: Codable, Sendable, Identifiable, Equatabl
   }
 }
 
+public struct ManagedLocalModelBenchmarkCase: Codable, Sendable, Identifiable, Equatable {
+  public let id: String
+  public let language: String
+  public let prompt: String
+  public init(id: String, language: String, prompt: String) { self.id = id; self.language = language; self.prompt = prompt }
+}
+
+public struct ManagedLocalModelBenchmarkResult: Codable, Sendable, Identifiable, Equatable {
+  public let id: String
+  public let language: String
+  public let elapsedMilliseconds: Int
+  public let responseCharacters: Int
+  public let passed: Bool
+  public let error: String?
+  public init(id: String, language: String, elapsedMilliseconds: Int, responseCharacters: Int, passed: Bool, error: String? = nil) {
+    self.id = id; self.language = language; self.elapsedMilliseconds = elapsedMilliseconds
+    self.responseCharacters = responseCharacters; self.passed = passed; self.error = error
+  }
+}
+
+public struct ManagedLocalModelBenchmarkRun: Codable, Sendable, Identifiable, Equatable {
+  public let id: UUID
+  public let modelID: String
+  public let startedAt: Date
+  public let completedAt: Date
+  public let runtimeRSSBytes: Int64?
+  public let results: [ManagedLocalModelBenchmarkResult]
+  public var passed: Bool { results.allSatisfy(\.passed) && !results.isEmpty }
+  public init(id: UUID = UUID(), modelID: String, startedAt: Date, completedAt: Date, runtimeRSSBytes: Int64?, results: [ManagedLocalModelBenchmarkResult]) {
+    self.id = id; self.modelID = modelID; self.startedAt = startedAt; self.completedAt = completedAt
+    self.runtimeRSSBytes = runtimeRSSBytes; self.results = results
+  }
+}
+
+public enum ManagedLocalModelAcceptanceSuite {
+  public static let cases: [ManagedLocalModelBenchmarkCase] = [
+    .init(id: "ja-short", language: "Japanese", prompt: "次の文を一文で要約してください。Onigiri Harness はローカルでAIと資料を扱うmacOSアプリです。"),
+    .init(id: "en-short", language: "English", prompt: "Reply in one sentence: What is the purpose of a local AI harness?")
+  ]
+}
+
 public struct ManagedLocalModelsResponse: Codable, Sendable {
   public let catalog: [ManagedLocalModelCatalogEntry]
   public let records: [ManagedLocalModelRecord]
@@ -100,11 +141,13 @@ public struct ManagedLocalModelsResponse: Codable, Sendable {
   public let runtimeAvailable: Bool
   public let totalMemoryBytes: Int64
   public let loadedModelID: String?
+  public let benchmarks: [ManagedLocalModelBenchmarkRun]
 
   public init(catalog: [ManagedLocalModelCatalogEntry], records: [ManagedLocalModelRecord], runtimePath: String,
-              runtimeAvailable: Bool, totalMemoryBytes: Int64, loadedModelID: String?) {
+              runtimeAvailable: Bool, totalMemoryBytes: Int64, loadedModelID: String?, benchmarks: [ManagedLocalModelBenchmarkRun] = []) {
     self.catalog = catalog; self.records = records; self.runtimePath = runtimePath
     self.runtimeAvailable = runtimeAvailable; self.totalMemoryBytes = totalMemoryBytes; self.loadedModelID = loadedModelID
+    self.benchmarks = benchmarks
   }
 }
 
@@ -129,6 +172,7 @@ public enum ManagedLocalModelError: LocalizedError {
   case unsafeDownloadURL
   case invalidRuntime
   case noPartialDownload
+  case modelNotLoaded
 
   public var errorDescription: String? {
     switch self {
@@ -139,6 +183,7 @@ public enum ManagedLocalModelError: LocalizedError {
     case .unsafeDownloadURL: return "許可されていないモデル取得先です。"
     case .invalidRuntime: return "llama-server の実行ファイルを指定してください。"
     case .noPartialDownload: return "再開できる未完了ダウンロードがありません。"
+    case .modelNotLoaded: return "受入テストを実行するには、対象モデルをロードしてください。"
     }
   }
 }
@@ -151,7 +196,9 @@ public actor ManagedLocalModelManager {
   private let rootURL: URL
   private let modelsURL: URL
   private let stateURL: URL
+  private let benchmarksURL: URL
   private var records: [String: ManagedLocalModelRecord] = [:]
+  private var benchmarks: [ManagedLocalModelBenchmarkRun] = []
   private var runtimePath: String
   private var loadedModelID: String?
   private var runtimeProcess: Process?
@@ -162,11 +209,15 @@ public actor ManagedLocalModelManager {
     self.rootURL = rootURL
     self.modelsURL = rootURL.appending(path: "models", directoryHint: .isDirectory)
     self.stateURL = rootURL.appending(path: "state.json")
+    self.benchmarksURL = rootURL.appending(path: "benchmarks.json")
     self.runtimePath = environment["ONIGIRI_LLAMA_SERVER_PATH"] ?? "/opt/homebrew/bin/llama-server"
     try? FileManager.default.createDirectory(at: modelsURL, withIntermediateDirectories: true)
     if let data = try? Data(contentsOf: stateURL), let saved = try? JSONDecoder().decode(SavedState.self, from: data) {
       self.records = Dictionary(uniqueKeysWithValues: saved.records.map { ($0.id, $0) })
       self.runtimePath = saved.runtimePath
+    }
+    if let data = try? Data(contentsOf: benchmarksURL), let saved = try? JSONDecoder().decode([ManagedLocalModelBenchmarkRun].self, from: data) {
+      self.benchmarks = Array(saved.prefix(20))
     }
   }
 
@@ -177,7 +228,8 @@ public actor ManagedLocalModelManager {
       catalog: ManagedLocalModelCatalog.entries,
       records: ManagedLocalModelCatalog.entries.map { records[$0.id] ?? ManagedLocalModelRecord(id: $0.id) },
       runtimePath: runtimePath, runtimeAvailable: FileManager.default.isExecutableFile(atPath: runtimePath),
-      totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory), loadedModelID: loadedModelID)
+      totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory), loadedModelID: loadedModelID,
+      benchmarks: benchmarks.sorted { $0.completedAt > $1.completedAt })
   }
 
   public func setRuntimePath(_ path: String) throws -> ManagedLocalModelsResponse {
@@ -259,6 +311,34 @@ public actor ManagedLocalModelManager {
     loadedModelID = id
     try persist()
     return ProviderConfig(providerID: "onigiri-local", baseURL: Self.runtimeBaseURL)
+  }
+
+  public func benchmark(id: String) async throws -> ManagedLocalModelBenchmarkRun {
+    guard loadedModelID == id, runtimeProcess?.isRunning == true else { throw ManagedLocalModelError.modelNotLoaded }
+    let startedAt = Date()
+    let modelID = try await runtimeModelID()
+    var results: [ManagedLocalModelBenchmarkResult] = []
+    for testCase in ManagedLocalModelAcceptanceSuite.cases {
+      let caseStartedAt = Date()
+      do {
+        let response = try await complete(prompt: testCase.prompt, modelID: modelID)
+        let elapsed = Int(Date().timeIntervalSince(caseStartedAt) * 1_000)
+        let passed = !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && elapsed <= 120_000
+        results.append(.init(id: testCase.id, language: testCase.language, elapsedMilliseconds: elapsed,
+                             responseCharacters: response.count, passed: passed,
+                             error: passed ? nil : "応答が空か、120秒を超えました。"))
+      } catch {
+        results.append(.init(id: testCase.id, language: testCase.language,
+                             elapsedMilliseconds: Int(Date().timeIntervalSince(caseStartedAt) * 1_000),
+                             responseCharacters: 0, passed: false, error: error.localizedDescription))
+      }
+    }
+    let run = ManagedLocalModelBenchmarkRun(modelID: id, startedAt: startedAt, completedAt: Date(),
+                                             runtimeRSSBytes: runtimeRSSBytes(), results: results)
+    benchmarks.insert(run, at: 0)
+    benchmarks = Array(benchmarks.prefix(20))
+    try persistBenchmarks()
+    return run
   }
 
   public func unload() throws -> ManagedLocalModelsResponse {
@@ -362,6 +442,55 @@ public actor ManagedLocalModelManager {
   private func fileSize(at url: URL) -> Int64 {
     ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.int64Value ?? 0
   }
+
+  private func runtimeModelID() async throws -> String {
+    let url = URL(string: "http://127.0.0.1:\(Self.runtimePort)/v1/models")!
+    let (data, response) = try await URLSession.shared.data(from: url)
+    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+          let model = try JSONDecoder().decode(LocalRuntimeModelList.self, from: data).data.first?.id else {
+      throw HarnessError.unavailable("llama-serverからモデル一覧を取得できませんでした。")
+    }
+    return model
+  }
+
+  private func complete(prompt: String, modelID: String) async throws -> String {
+    let url = URL(string: "http://127.0.0.1:\(Self.runtimePort)/v1/chat/completions")!
+    var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = 125
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(LocalBenchmarkRequest(model: modelID, messages: [.init(role: "user", content: prompt)]))
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+      throw HarnessError.unavailable("llama-serverの受入ケース実行に失敗しました。")
+    }
+    return try JSONDecoder().decode(LocalBenchmarkResponse.self, from: data).choices.first?.message.content ?? ""
+  }
+
+  private func runtimeRSSBytes() -> Int64? {
+    guard let process = runtimeProcess else { return nil }
+    let output = Pipe(); let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/bin/ps")
+    task.arguments = ["-o", "rss=", "-p", String(process.processIdentifier)]
+    task.standardOutput = output
+    guard (try? task.run()) != nil else { return nil }
+    task.waitUntilExit()
+    let value = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return value.flatMap(Int64.init).map { $0 * 1_024 }
+  }
+
+  private func persistBenchmarks() throws {
+    try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+    try JSONEncoder().encode(benchmarks).write(to: benchmarksURL, options: [.atomic])
+  }
+
+  private struct LocalRuntimeModelList: Decodable { let data: [LocalRuntimeModel] }
+  private struct LocalRuntimeModel: Decodable { let id: String }
+  private struct LocalBenchmarkRequest: Encodable {
+    let model: String; let messages: [LocalBenchmarkMessage]; let stream = false; let max_tokens = 96; let temperature = 0.0
+  }
+  private struct LocalBenchmarkMessage: Codable { let role: String; let content: String }
+  private struct LocalBenchmarkResponse: Decodable { let choices: [LocalBenchmarkChoice] }
+  private struct LocalBenchmarkChoice: Decodable { let message: LocalBenchmarkMessage }
 
   private func waitForRuntimeReady() async throws {
     guard let url = URL(string: "http://127.0.0.1:\(Self.runtimePort)/v1/models") else { return }

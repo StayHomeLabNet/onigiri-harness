@@ -1384,3 +1384,18 @@ private struct CancellableTestSession: ModelConversationSession {
   #expect(decoded.downloadedBytes == 42)
   #expect(decoded.sourceRevision == nil)
 }
+
+@Test func localModelAcceptanceSuiteRequiresLoadedModelAndDefinesBothLanguages() async throws {
+  #expect(Set(ManagedLocalModelAcceptanceSuite.cases.map(\.language)) == Set(["Japanese", "English"]))
+  let root = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appending(path: "OnigiriLocalBenchmarkTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let manager = ManagedLocalModelManager(rootURL: root, environment: [:])
+  do {
+    _ = try await manager.benchmark(id: "qwen2.5-1.5b-instruct-q4-k-m")
+    Issue.record("Benchmarking an unloaded model must fail")
+  } catch let error as ManagedLocalModelError {
+    guard case .modelNotLoaded = error else { Issue.record("Unexpected error: \(error)"); return }
+  }
+  #expect((await manager.snapshot()).benchmarks.isEmpty)
+}

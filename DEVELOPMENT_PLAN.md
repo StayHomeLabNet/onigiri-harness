@@ -75,6 +75,7 @@ flowchart LR
 | 1.9 — Counterfactual Replay | 実装済み | 同じ条件を別Profile・RAG設定で独立再実行して比較 |
 | 1.10 — Regression Suites & Reports | 実装済み | 基準ケース、ポリシー、合格・要確認・失敗、Markdown/CSVレポート |
 | 1.11 — Managed Local Model Reliability | 実装済み | 中断後のHTTP Range再開、進捗・停止、固定リビジョン、取得サイズ・ETag・SHA-256の記録、ロード時の応答確認を追加 |
+| 1.12 — Local Model Acceptance & Benchmarking | 実装済み | ロード済みモデルへ日英の短い受入ケースを実行し、成功率、応答時間、出力量、推論プロセスRSSを保存・表示 |
 
 ## Parent Phase 2 — Vibe Build Workspace
 
