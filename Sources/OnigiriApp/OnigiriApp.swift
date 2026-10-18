@@ -225,6 +225,12 @@ private struct LocalModelsSettingsView: View {
           .font(.caption)
       }
 
+      if let response, !response.comparison.rows.isEmpty {
+        Section(english ? "Comparison and recommendation" : "比較とおすすめ") {
+          comparisonSummary(response)
+        }
+      }
+
       Section(english ? "Model catalog" : "モデルカタログ") {
         if let response {
           Text(english
@@ -248,6 +254,39 @@ private struct LocalModelsSettingsView: View {
         await refresh()
         try? await Task.sleep(for: .seconds(1))
       }
+    }
+  }
+
+  @ViewBuilder private func comparisonSummary(_ response: ManagedLocalModelsResponse) -> some View {
+    let report = response.comparison
+    if let generalID = report.recommendedGeneralModelID,
+       let entry = response.catalog.first(where: { $0.id == generalID }) {
+      Label(english ? "Recommended for this Mac: \(entry.name)" : "このMacへのおすすめ: \(entry.name)", systemImage: "star.circle.fill")
+        .foregroundStyle(.green)
+    } else {
+      Text(english ? "Run acceptance on downloaded models to receive a recommendation." : "ダウンロード済みモデルで受入テストを実行すると、おすすめを表示します。")
+        .font(.caption).foregroundStyle(.secondary)
+    }
+    if let lowMemoryID = report.recommendedLowMemoryModelID,
+       lowMemoryID != report.recommendedGeneralModelID,
+       let entry = response.catalog.first(where: { $0.id == lowMemoryID }) {
+      Label(english ? "Lower-memory choice: \(entry.name)" : "低メモリ向け: \(entry.name)", systemImage: "memorychip")
+        .font(.caption).foregroundStyle(.secondary)
+    }
+    ForEach(report.rows) { row in
+      HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 1) {
+          Text(row.modelName).font(.subheadline.weight(.medium))
+          Text(english
+            ? "\(row.passedCases)/\(row.totalCases) cases · avg \(row.averageLatencyMilliseconds.map { "\($0) ms" } ?? "—") · RSS \(row.runtimeRSSBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory) } ?? "—")"
+            : "\(row.passedCases)/\(row.totalCases) 件 · 平均 \(row.averageLatencyMilliseconds.map { "\($0) ms" } ?? "—") · RSS \(row.runtimeRSSBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .memory) } ?? "—")")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        Spacer()
+        Text(row.passed && row.memoryFits ? (english ? "Ready" : "推奨候補") : (english ? "Review" : "要確認"))
+          .font(.caption.weight(.medium)).foregroundStyle(row.passed && row.memoryFits ? .green : .orange)
+      }
+      .padding(.vertical, 2)
     }
   }
 
@@ -285,6 +324,10 @@ private struct LocalModelsSettingsView: View {
             .disabled(response?.runtimeAvailable != true)
           Button(english ? "Delete" : "削除", role: .destructive) { Task { await action("/local-models/delete", id: entry.id) } }
         }
+      }
+      if response?.comparison.recommendedGeneralModelID == entry.id {
+        Label(english ? "Recommended for this Mac" : "このMacへのおすすめ", systemImage: "star.fill")
+          .font(.caption).foregroundStyle(.green)
       }
       if state == .loaded {
         HStack(spacing: 8) {

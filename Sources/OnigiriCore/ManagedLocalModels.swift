@@ -134,6 +134,62 @@ public enum ManagedLocalModelAcceptanceSuite {
   ]
 }
 
+public struct ManagedLocalModelComparisonRow: Codable, Sendable, Identifiable, Equatable {
+  public let modelID: String
+  public let modelName: String
+  public let passedCases: Int
+  public let totalCases: Int
+  public let averageLatencyMilliseconds: Int?
+  public let runtimeRSSBytes: Int64?
+  public let memoryFits: Bool
+  public let score: Int?
+  public var id: String { modelID }
+  public var passed: Bool { totalCases > 0 && passedCases == totalCases }
+  public init(modelID: String, modelName: String, passedCases: Int, totalCases: Int,
+              averageLatencyMilliseconds: Int?, runtimeRSSBytes: Int64?, memoryFits: Bool, score: Int?) {
+    self.modelID = modelID; self.modelName = modelName; self.passedCases = passedCases; self.totalCases = totalCases
+    self.averageLatencyMilliseconds = averageLatencyMilliseconds; self.runtimeRSSBytes = runtimeRSSBytes
+    self.memoryFits = memoryFits; self.score = score
+  }
+}
+
+public struct ManagedLocalModelComparisonReport: Codable, Sendable, Equatable {
+  public let rows: [ManagedLocalModelComparisonRow]
+  public let recommendedGeneralModelID: String?
+  public let recommendedLowMemoryModelID: String?
+  public init(rows: [ManagedLocalModelComparisonRow], recommendedGeneralModelID: String?, recommendedLowMemoryModelID: String?) {
+    self.rows = rows; self.recommendedGeneralModelID = recommendedGeneralModelID
+    self.recommendedLowMemoryModelID = recommendedLowMemoryModelID
+  }
+}
+
+public enum ManagedLocalModelComparison {
+  public static func make(catalog: [ManagedLocalModelCatalogEntry], benchmarks: [ManagedLocalModelBenchmarkRun], totalMemoryBytes: Int64) -> ManagedLocalModelComparisonReport {
+    let latestRuns = Dictionary(grouping: benchmarks, by: \.modelID).compactMapValues { $0.max(by: { $0.completedAt < $1.completedAt }) }
+    let rows = catalog.compactMap { entry -> ManagedLocalModelComparisonRow? in
+      guard let run = latestRuns[entry.id] else { return nil }
+      let total = run.results.count
+      let passed = run.results.filter(\.passed).count
+      let latency = total > 0 ? run.results.map(\.elapsedMilliseconds).reduce(0, +) / total : nil
+      let fits = entry.recommendedMemoryBytes <= totalMemoryBytes
+      let score = latency.map { value in
+        let reliability = total == 0 ? 0 : (passed * 100 / total)
+        return reliability + (fits ? 25 : -100) - min(60, value / 100)
+      }
+      return ManagedLocalModelComparisonRow(modelID: entry.id, modelName: entry.name, passedCases: passed,
+                                             totalCases: total, averageLatencyMilliseconds: latency,
+                                             runtimeRSSBytes: run.runtimeRSSBytes, memoryFits: fits, score: score)
+    }.sorted { ($0.score ?? Int.min) > ($1.score ?? Int.min) }
+    let accepted = rows.filter { $0.passed && $0.memoryFits }
+    let general = accepted.max { ($0.score ?? Int.min) < ($1.score ?? Int.min) }?.modelID
+    let lowMemory = accepted.min { lhs, rhs in
+      (catalog.first { $0.id == lhs.modelID }?.recommendedMemoryBytes ?? .max)
+        < (catalog.first { $0.id == rhs.modelID }?.recommendedMemoryBytes ?? .max)
+    }?.modelID
+    return .init(rows: rows, recommendedGeneralModelID: general, recommendedLowMemoryModelID: lowMemory)
+  }
+}
+
 public struct ManagedLocalModelsResponse: Codable, Sendable {
   public let catalog: [ManagedLocalModelCatalogEntry]
   public let records: [ManagedLocalModelRecord]
@@ -142,12 +198,15 @@ public struct ManagedLocalModelsResponse: Codable, Sendable {
   public let totalMemoryBytes: Int64
   public let loadedModelID: String?
   public let benchmarks: [ManagedLocalModelBenchmarkRun]
+  public let comparison: ManagedLocalModelComparisonReport
 
   public init(catalog: [ManagedLocalModelCatalogEntry], records: [ManagedLocalModelRecord], runtimePath: String,
-              runtimeAvailable: Bool, totalMemoryBytes: Int64, loadedModelID: String?, benchmarks: [ManagedLocalModelBenchmarkRun] = []) {
+              runtimeAvailable: Bool, totalMemoryBytes: Int64, loadedModelID: String?, benchmarks: [ManagedLocalModelBenchmarkRun] = [],
+              comparison: ManagedLocalModelComparisonReport? = nil) {
     self.catalog = catalog; self.records = records; self.runtimePath = runtimePath
     self.runtimeAvailable = runtimeAvailable; self.totalMemoryBytes = totalMemoryBytes; self.loadedModelID = loadedModelID
     self.benchmarks = benchmarks
+    self.comparison = comparison ?? ManagedLocalModelComparison.make(catalog: catalog, benchmarks: benchmarks, totalMemoryBytes: totalMemoryBytes)
   }
 }
 
@@ -229,7 +288,9 @@ public actor ManagedLocalModelManager {
       records: ManagedLocalModelCatalog.entries.map { records[$0.id] ?? ManagedLocalModelRecord(id: $0.id) },
       runtimePath: runtimePath, runtimeAvailable: FileManager.default.isExecutableFile(atPath: runtimePath),
       totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory), loadedModelID: loadedModelID,
-      benchmarks: benchmarks.sorted { $0.completedAt > $1.completedAt })
+      benchmarks: benchmarks.sorted { $0.completedAt > $1.completedAt },
+      comparison: ManagedLocalModelComparison.make(catalog: ManagedLocalModelCatalog.entries, benchmarks: benchmarks,
+                                                   totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory)))
   }
 
   public func setRuntimePath(_ path: String) throws -> ManagedLocalModelsResponse {

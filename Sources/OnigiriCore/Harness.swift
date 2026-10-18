@@ -408,7 +408,7 @@ public struct ChatStreamEvent: Codable, Sendable, Equatable {
 }
 
 public enum OnigiriServerProtocol {
-  public static let version = "2026-10-18-local-model-acceptance-v1"
+  public static let version = "2026-10-18-local-model-comparison-v1"
 }
 
 public struct ServiceStatus: Codable, Sendable {

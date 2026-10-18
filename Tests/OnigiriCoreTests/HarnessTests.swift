@@ -1399,3 +1399,23 @@ private struct CancellableTestSession: ModelConversationSession {
   }
   #expect((await manager.snapshot()).benchmarks.isEmpty)
 }
+
+@Test func localModelComparisonRecommendsPassedModelThatFitsMemory() {
+  let catalog = ManagedLocalModelCatalog.entries
+  let accepted = ManagedLocalModelBenchmarkRun(
+    modelID: catalog[0].id, startedAt: Date(), completedAt: Date(), runtimeRSSBytes: 2_000_000_000,
+    results: [
+      .init(id: "ja", language: "Japanese", elapsedMilliseconds: 120, responseCharacters: 30, passed: true),
+      .init(id: "en", language: "English", elapsedMilliseconds: 100, responseCharacters: 30, passed: true),
+    ])
+  let failed = ManagedLocalModelBenchmarkRun(
+    modelID: catalog[1].id, startedAt: Date(), completedAt: Date(), runtimeRSSBytes: 6_000_000_000,
+    results: [
+      .init(id: "ja", language: "Japanese", elapsedMilliseconds: 80, responseCharacters: 0, passed: false),
+      .init(id: "en", language: "English", elapsedMilliseconds: 80, responseCharacters: 30, passed: true),
+    ])
+  let report = ManagedLocalModelComparison.make(catalog: catalog, benchmarks: [accepted, failed], totalMemoryBytes: 16_000_000_000)
+  #expect(report.recommendedGeneralModelID == catalog[0].id)
+  #expect(report.recommendedLowMemoryModelID == catalog[0].id)
+  #expect(report.rows.first(where: { $0.modelID == catalog[0].id })?.passed == true)
+}
