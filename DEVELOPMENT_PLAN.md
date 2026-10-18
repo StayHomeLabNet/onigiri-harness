@@ -69,9 +69,11 @@ flowchart LR
 | 1.3 — RAG Modes & Manager | 実装済み | `disabled`、`always`、モデル共通のRAG ManagerとTool契約 |
 | 1.4 — Agentic RAG | 実装済み | 検索要否、検索語、再検索を判断し、追跡可能な形で実行 |
 | 1.5 — RAG Evaluation & Diagnostics | 実装済み | 検索判断・資料カバレッジ・回帰・原因候補を評価 |
-| 1.6 — Evidence Flight Recorder | 実装済み | 回答時のProfile、モデル、履歴、RAG、引用、遅延を保存 |
-| 1.7 — Counterfactual Replay | 実装済み | 同じ条件を別Profile・RAG設定で独立再実行して比較 |
-| 1.8 — Regression Suites & Reports | 実装済み | 基準ケース、ポリシー、合格・要確認・失敗、Markdown/CSVレポート |
+| 1.6 — Managed Local Models（GGUF / llama.cpp） | 実装済み | Hugging Face公開GGUFの取得・専用保存・削除、llama-serverのloopback起動、通常チャットのOnigiri Local Provider接続を追加 |
+| 1.7 — Local Model Catalog & Hardware Guidance | 実装済み | 容量、量子化、ライセンス、用途、推奨メモリとこのMacの搭載メモリを表示し、モデル選択を支援 |
+| 1.8 — Evidence Flight Recorder | 実装済み | 回答時のProfile、モデル、履歴、RAG、引用、遅延を保存 |
+| 1.9 — Counterfactual Replay | 実装済み | 同じ条件を別Profile・RAG設定で独立再実行して比較 |
+| 1.10 — Regression Suites & Reports | 実装済み | 基準ケース、ポリシー、合格・要確認・失敗、Markdown/CSVレポート |
 
 ## Parent Phase 2 — Vibe Build Workspace
 
@@ -140,8 +142,6 @@ flowchart LR
 | 2.55 — Activity Search & Cleanup Policy | 任意・保留 | 作業履歴をキーワード・ワークスペース・期間で検索し、保存件数や保持期間を設定可能にする |
 | 2.56 — Product UX Reset & Task-First Navigation | 実装済み | 入口を「話す」「新しいプロジェクト」「資料を使う」「Webを調べる」に再編し、会話の内容からプロジェクト下書きを作成して同じ制作フローへ接続 |
 | 2.57 — Project Home & Progressive Disclosure | 実装済み | プロジェクトをホーム／計画／作る／確認／履歴／設定に分け、既定のホームに目的・次にすること・進み具合・最近の更新を表示 |
-| 1.6 — Managed Local Models（GGUF / llama.cpp） | 実装済み | Hugging Face公開GGUFの取得・専用保存・削除、llama-serverのloopback起動、通常チャットのOnigiri Local Provider接続を追加 |
-| 1.7 — Local Model Catalog & Hardware Guidance | 実装済み | 容量、量子化、ライセンス、用途、推奨メモリとこのMacの搭載メモリを表示し、モデル選択を支援 |
 
 完了条件:
 
@@ -254,7 +254,7 @@ Jevに限らず、ローカルまたは互換APIで提供される意思決定�
 ```mermaid
 flowchart LR
     I[2.1 Intent] --> P[2.2 Proposal] --> B[2.3 Guided Build] --> R[2.4 Review / Apply] --> M[2.5 Project Memory]
-    E[1.6–1.8 Evidence] --> R
+    E[1.8–1.10 Evidence] --> R
     A[2.0 AI Execution] --> B
     M --> C[6.4 Headless Regression / CI]
     M --> V[2.6 Pilot Acceptance] --> H[2.7 Reliability] --> U[2.8 UX Refinement]
@@ -272,7 +272,7 @@ flowchart LR
 | Parent Phase 3 / Sub-phase 3.1–3.3 | Parent Phase 3 / Sub-phase 3.1–3.3 |
 | Parent Phase 4 / Sub-phase 4.1–4.2 | Parent Phase 4 / Sub-phase 4.1–4.2 |
 | Parent Phase 5 / Sub-phase 5.1–5.2s | Parent Phase 5 / 各該当Sub-phase |
-| 旧 Parent Phase 6 / Sub-phase 6.1–6.3 | Parent Phase 1 / Sub-phase 1.6–1.8、および Parent Phase 6 / Sub-phase 6.1–6.3として継続参照 |
+| 旧 Parent Phase 6 / Sub-phase 6.1–6.3 | Parent Phase 1 / Sub-phase 1.8–1.10、および Parent Phase 6 / Sub-phase 6.1–6.3として継続参照 |
 
 Evidence機能は、知識の根拠層でもあり、継続品質の検証層でもあります。このため実装済み番号の互換性を保ったまま、製品構成上はParent Phase 1と6の両方から参照します。
 
