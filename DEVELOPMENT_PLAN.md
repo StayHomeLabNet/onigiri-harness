@@ -138,6 +138,7 @@ flowchart LR
 | 2.53 — Workspace Activity & Smart Resume | 実装済み | ワークスペースとお気に入り操作のローカル履歴、上部の再開メニュー、履歴記録の停止・消去を追加 |
 | 2.54 — Workspace Activity Details & Pinned Resume | 実装済み | 作業種別・対象ワークスペース・日時を履歴へ表示し、頻繁に戻る作業を固定して再開メニュー最上部へ表示 |
 | 2.55 — Activity Search & Cleanup Policy | 任意・保留 | 作業履歴をキーワード・ワークスペース・期間で検索し、保存件数や保持期間を設定可能にする |
+| 2.56 — Product UX Reset & Task-First Navigation | 実装済み | 入口を「話す」「新しいプロジェクト」「資料を使う」「Webを調べる」に再編し、会話の内容からプロジェクト下書きを作成して同じ制作フローへ接続 |
 
 完了条件:
 

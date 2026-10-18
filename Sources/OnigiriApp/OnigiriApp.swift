@@ -2194,11 +2194,11 @@ private enum OnigiriWorkspace: String, CaseIterable, Identifiable, Codable {
 
   func title(english: Bool) -> String {
     switch self {
-    case .chat: return english ? "Chat" : "チャット"
-    case .knowledge: return english ? "Knowledge" : "知識"
-    case .build: return english ? "Build" : "プロジェクト制作"
-    case .explore: return english ? "Research" : "調査・実験"
-    case .data: return english ? "Settings" : "設定・データ"
+    case .chat: return english ? "Talk" : "話す"
+    case .knowledge: return english ? "Use documents" : "資料を使う"
+    case .build: return english ? "Projects" : "プロジェクト"
+    case .explore: return english ? "Web research" : "Webを調べる"
+    case .data: return english ? "Settings" : "設定"
     }
   }
 
@@ -2343,6 +2343,7 @@ struct ChatView: View {
   @State private var selectedRAGMode = RAGMode.always
   @State private var contextLimit = 6_000
   @State private var showingProductProfiles = false
+  @State private var showingRuntimeSettings = false
   @State private var errorMessage: String?
   @State private var knowledgeStatus = KnowledgeStatus(documentCount: 0, chunkCount: 0)
   @State private var knowledgeDocuments: [KnowledgeDocumentSummary] = []
@@ -2379,6 +2380,7 @@ struct ChatView: View {
   @State private var showingRAGEvaluation = false
   @State private var showingCodexTasks = false
   @State private var showingVibeProjects = false
+  @State private var projectToOpenID: UUID?
   @State private var aiTaskAvailabilities: [CodexAvailability] = []
   @State private var codexTasks: [CodexTaskRecord] = []
   @State private var showingMCPAudit = false
@@ -2546,7 +2548,7 @@ struct ChatView: View {
       .frame(minWidth: 820, minHeight: 620, alignment: .topLeading)
     }
     .sheet(isPresented: $showingVibeProjects) {
-      VibeProjectsView()
+      VibeProjectsView(initialProjectID: projectToOpenID)
         .frame(minWidth: 900, minHeight: 620, alignment: .topLeading)
     }
     .sheet(isPresented: $showingWebResearch) {
@@ -2841,12 +2843,15 @@ struct ChatView: View {
       knowledgeSettings
       Divider()
 
-      if selectedWorkspace == .chat && (!hasCompletedOnboarding || showingOnboardingManually) {
-        onboardingCard
+      if selectedWorkspace == .chat && (messages.isEmpty || !hasCompletedOnboarding || showingOnboardingManually) {
+        taskFirstStartCard
       }
 
       if selectedWorkspace == .chat {
-        contextualShortcutShelf
+        conversationProjectBridge
+        if messages.isEmpty == false && hasCompletedOnboarding && showingOnboardingManually == false {
+          contextualShortcutShelf
+        }
       }
 
       ScrollViewReader { proxy in
@@ -2999,6 +3004,29 @@ struct ChatView: View {
   }
 
   private var providerSettings: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 8) {
+        Label(
+          isEnglishUI ? "Using \(providerName)" : "使用中: \(providerName)",
+          systemImage: "cpu")
+          .font(.subheadline.weight(.semibold))
+        Text(modelID.isEmpty ? (isEnglishUI ? "Default model" : "既定モデル") : modelID)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+        Spacer()
+        Button(isEnglishUI ? "Model & chat settings" : "モデルと会話の設定", systemImage: "slider.horizontal.3") {
+          showingRuntimeSettings.toggle()
+        }
+        .controlSize(.small)
+      }
+      if showingRuntimeSettings {
+        providerSettingsForm
+      }
+    }
+  }
+
+  private var providerSettingsForm: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 10) {
         Text("Profile")
@@ -4464,6 +4492,7 @@ struct ChatView: View {
       showingKnowledgeImporter = true
     case .openProjects:
       selectedWorkspace = .build
+      projectToOpenID = nil
       showingVibeProjects = true
     case .startAITask:
       selectedWorkspace = .build
@@ -4481,31 +4510,28 @@ struct ChatView: View {
     }
   }
 
-  private var onboardingCard: some View {
-    VStack(alignment: .leading, spacing: 10) {
+  private var taskFirstStartCard: some View {
+    VStack(alignment: .leading, spacing: 12) {
       HStack {
-        Label(isEnglishUI ? "Start here" : "最初にすること", systemImage: "sparkles")
+        Label(isEnglishUI ? "What would you like to do?" : "今日は何をしますか？", systemImage: "sparkles")
           .font(.headline)
         Spacer()
-        Button(isEnglishUI ? "Close guide" : "ガイドを閉じる") {
-          hasCompletedOnboarding = true
-          showingOnboardingManually = false
+        if !hasCompletedOnboarding || showingOnboardingManually {
+          Button(isEnglishUI ? "Hide" : "閉じる") {
+            hasCompletedOnboarding = true
+            showingOnboardingManually = false
+          }
+          .controlSize(.small)
         }
-        .controlSize(.small)
       }
       Text(isEnglishUI
-        ? "Onigiri keeps chat, knowledge, and project building in separate workspaces. Start with the path you need today."
-        : "Onigiriでは会話、資料、プロジェクト制作を目的別に分けています。今日したいことから始められます。")
+        ? "Start with the outcome you want. You can switch tools only when they help."
+        : "まず、したいことから始めます。必要になったときだけ、資料・Web・制作の機能を使えます。")
         .font(.caption)
         .foregroundStyle(.secondary)
-      HStack(alignment: .top, spacing: 12) {
-        onboardingStep(number: 1, title: isEnglishUI ? "Check the model" : "モデルを確認", detail: isEnglishUI ? "Choose a provider and model above." : "上部でProviderとモデルを選びます。")
-        onboardingStep(number: 2, title: isEnglishUI ? "Add knowledge" : "資料を追加", detail: isEnglishUI ? "Import documents when you want grounded answers.": "資料に基づく回答が必要なときに追加します。") {
-          selectedWorkspace = .knowledge
-        }
-        onboardingStep(number: 3, title: isEnglishUI ? "Build a project" : "プロジェクトを制作", detail: isEnglishUI ? "Turn an idea into a plan before an AI builds it." : "AIに頼む前に、作りたいことを計画にします。") {
-          selectedWorkspace = .build
-        }
+      ViewThatFits(in: .horizontal) {
+        HStack(alignment: .top, spacing: 10) { taskFirstChoices }
+        VStack(alignment: .leading, spacing: 8) { taskFirstChoices }
       }
     }
     .padding(12)
@@ -4513,19 +4539,123 @@ struct ChatView: View {
     .clipShape(RoundedRectangle(cornerRadius: 10))
   }
 
-  @ViewBuilder private func onboardingStep(
-    number: Int, title: String, detail: String, action: (() -> Void)? = nil
-  ) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text("\(number)").font(.caption.bold()).foregroundStyle(Color.accentColor)
-      Text(title).font(.caption.bold())
-      Text(detail).font(.caption2).foregroundStyle(.secondary)
-      if let action {
-        Button(isEnglishUI ? "Open" : "開く", action: action)
-          .controlSize(.mini)
+  @ViewBuilder private var taskFirstChoices: some View {
+    taskFirstChoice(
+      title: isEnglishUI ? "Talk" : "話す",
+      detail: isEnglishUI ? "Ask, think, or draft together." : "相談、整理、文章作成を始めます。",
+      symbol: "bubble.left.and.bubble.right") {
+        selectedWorkspace = .chat
       }
+    taskFirstChoice(
+      title: isEnglishUI ? "New project" : "新しいプロジェクト",
+      detail: isEnglishUI ? "Plan and build something step by step." : "作りたいものを計画して、段階的に進めます。",
+      symbol: "plus.circle.fill") {
+        startNewProject()
+      }
+    taskFirstChoice(
+      title: isEnglishUI ? "Use documents" : "資料を使う",
+      detail: isEnglishUI ? "Answer from your local documents." : "手元の資料を根拠にして答えます。",
+      symbol: "books.vertical") {
+        selectedWorkspace = .knowledge
+        showingKnowledgeImporter = true
+      }
+    taskFirstChoice(
+      title: isEnglishUI ? "Web research" : "Webを調べる",
+      detail: isEnglishUI ? "Find current information on the web." : "最新のWeb情報を調べます。",
+      symbol: "safari") {
+        selectedWorkspace = .explore
+        showingWebResearch = true
+      }
+  }
+
+  @ViewBuilder private func taskFirstChoice(
+    title: String, detail: String, symbol: String, action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      VStack(alignment: .leading, spacing: 5) {
+        Label(title, systemImage: symbol).font(.subheadline.bold())
+        Text(detail).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+      }
+      .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+      .padding(8)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .buttonStyle(.bordered)
+    .accessibilityHint(detail)
+  }
+
+  @ViewBuilder private var conversationProjectBridge: some View {
+    if let project = selectedChatProject {
+      HStack(spacing: 8) {
+        Label(isEnglishUI ? "Project" : "プロジェクト", systemImage: "target")
+          .font(.caption.bold())
+          .foregroundStyle(.secondary)
+        Text(project.title.isEmpty ? (isEnglishUI ? "Untitled project" : "名称未設定") : project.title)
+          .font(.caption)
+          .lineLimit(1)
+        Spacer()
+        Button(isEnglishUI ? "Open project" : "プロジェクトを開く", systemImage: "arrow.up.right.square") {
+          projectToOpenID = project.id
+          selectedWorkspace = .build
+          showingVibeProjects = true
+        }
+        .controlSize(.small)
+      }
+    } else if messages.contains(where: { $0.role == .user }) {
+      HStack(spacing: 8) {
+        Image(systemName: "arrow.turn.down.right").foregroundStyle(Color.accentColor)
+        Text(isEnglishUI
+          ? "Turn this conversation into a project when you are ready to make something."
+          : "作りたいことが見えてきたら、この会話をプロジェクトにまとめられます。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Spacer()
+        Button(isEnglishUI ? "Make a project" : "プロジェクトにする", systemImage: "target") {
+          startProjectFromConversation()
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+      }
+      .padding(8)
+      .background(Color.secondary.opacity(0.07))
+      .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+  }
+
+  @MainActor private func startNewProject() {
+    let project = VibeProject(
+      title: "", goal: "", audience: "", essentialFeatures: [], constraints: "",
+      completionCriteria: [], nextStep: "")
+    vibeProjectStore.save(project)
+    projectToOpenID = project.id
+    selectedWorkspace = .build
+    showingVibeProjects = true
+  }
+
+  @MainActor private func startProjectFromConversation() {
+    guard let conversation = selectedConversation else { return }
+    let latestRequest = conversation.messages.reversed().first(where: { $0.role == .user })?.content
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let title = conversation.title == "新しい会話" || conversation.title == "New conversation"
+      ? String(latestRequest.prefix(40)) : conversation.title
+    let conversationSummary = conversation.messages.suffix(8)
+      .map { message in "\(message.role == .user ? "User" : "Onigiri"): \(message.content)" }
+      .joined(separator: "\n")
+    let memory = VibeProjectMemoryEntry(
+      kind: "conversation",
+      detail: isEnglishUI
+        ? "Started from this conversation. Review the linked chat when refining the brief.\n\(conversationSummary)"
+        : "この会話から開始しました。要件を整えるときは、紐付いたチャットを参照してください。\n\(conversationSummary)")
+    let project = VibeProject(
+      title: title.isEmpty ? (isEnglishUI ? "New project" : "新しいプロジェクト") : title,
+      goal: latestRequest,
+      audience: "", essentialFeatures: [], constraints: "", completionCriteria: [],
+      nextStep: isEnglishUI ? "Review the project brief." : "プロジェクトの下書きを確認する。",
+      memory: [memory])
+    vibeProjectStore.save(project)
+    assignProjectToSelectedConversation(project.id)
+    projectToOpenID = project.id
+    selectedWorkspace = .build
+    showingVibeProjects = true
   }
 
   private var knowledgeSettings: some View {
@@ -4698,7 +4828,9 @@ struct ChatView: View {
       }
     case .build:
       HStack(spacing: 8) {
-        Button(isEnglishUI ? "Open projects" : "プロジェクトを開く", systemImage: "target") { showingVibeProjects = true }
+        Button(isEnglishUI ? "New project" : "新しいプロジェクト", systemImage: "plus.circle.fill") { startNewProject() }
+          .buttonStyle(.borderedProminent)
+        Button(isEnglishUI ? "Open projects" : "プロジェクトを開く", systemImage: "target") { projectToOpenID = nil; showingVibeProjects = true }
         Button(isEnglishUI ? "AI tasks" : "AIタスク", systemImage: "terminal") { showingCodexTasks = true; Task { await loadCodexTasks() } }
       }
       .buttonStyle(.bordered)
@@ -7437,6 +7569,10 @@ private struct VibeProjectsView: View {
   @State private var reviewDueDate = Date()
   @State private var reviewNextStep = ""
   @State private var statusReportMessage: String?
+
+  init(initialProjectID: UUID? = nil) {
+    _selectedProjectID = State(initialValue: initialProjectID)
+  }
 
   private var english: Bool { locale.language.languageCode?.identifier == "en" }
   private var selectedProject: VibeProject? {
