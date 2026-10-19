@@ -27,7 +27,7 @@ Codex、Antigravity、Claude Code、ローカルLLMは、この体験を実現�
 | **4 — Local AI Gateway** | 実装済み | OpenAI互換APIとCLIベースの通常チャット |
 | **5 — Trust, Web & Distribution** | 大部分実装済み | 安全性、移行、Webリサーチ、アクセシビリティ、公開・CI |
 | **6 — Continuous Quality** | 実装済み | Evidence Regression、headless RAG評価、基準比較、CIゲートを実装済み |
-| **7 — Interaction Surface** | 仕様策定済み・実装待ち | T3 Codeを参考に、会話中心・段階的開示・コンテキストドロワーへUIを再構成 |
+| **7 — Interaction Surface** | 進行中 | T3 Codeを参考に、会話中心・段階的開示・コンテキストドロワーへUIを再構成 |
 
 次に実装する候補は、利用時に判明したVibe Buildまたは評価基盤の改善点を、独立したSub-phaseとして定義して着手します。
 
@@ -258,14 +258,14 @@ Jevに限らず、ローカルまたは互換APIで提供される意思決定�
 
 ## Parent Phase 7 — Interaction Surface
 
-状態: **仕様策定済み・実装待ち**
+状態: **進行中**
 
 会話を中心に、資料、Webリサーチ、プロジェクト、AI実行を必要になった時だけ開ける画面へ再構成します。T3 Codeの公開されている操作モデルを参考にしますが、画面や資産を複製せず、Onigiri Harness固有のローカルRAG、根拠、Vibe Buildに適した構造を設計します。詳細は [UI_REDESIGN_SPEC.md](docs/UI_REDESIGN_SPEC.md) を正とします。
 
 | Sub-phase | 状態 | 内容 |
 | --- | --- | --- |
 | 7.1 — T3-inspired Information Architecture | 仕様策定済み | スレッド中心の情報設計、3ペイン構成、RAGのコンテキストドロワー、プロジェクトへの昇格導線、ローカライズと移行方針を定義 |
-| 7.2 — Adaptive Workspace Shell | 計画 | 左ナビゲーション、スレッド一覧、主作業領域、任意表示のインスペクタを実装 |
+| 7.2 — Adaptive Workspace Shell | 実装済み | 左のアプリレールと検索可能なスレッド一覧、会話を保つ主作業領域、目的別に開閉する右インスペクタを実装 |
 | 7.3 — Unified Thread & Composer | 計画 | 会話、AIタスク、Web調査、実行進捗を1つのスレッドに表示し、入力欄近くでモデルとコンテキストを選択可能にする |
 | 7.4 — Context Drawer & RAG Experience | 計画 | 資料の追加・選択・検索設定・引用・利用チャンクを文脈に応じて表示するコンテキストドロワーを実装 |
 | 7.5 — Project & Agent Run Inspector | 計画 | プロジェクトの次の作業、計画、AI実行、差分、確認結果を右側インスペクタへ段階的に表示 |
@@ -273,7 +273,7 @@ Jevに限らず、ローカルまたは互換APIで提供される意思決定�
 
 ## 実装の優先順
 
-次は **Parent Phase 7 / Sub-phase 7.2 — Adaptive Workspace Shell** を提案します。既存データを維持したまま、アプリレール、スレッド一覧、主作業領域、任意表示のインスペクタを導入します。
+次は **Parent Phase 7 / Sub-phase 7.3 — Unified Thread & Composer** を提案します。会話、AIタスク、Web調査、実行進捗を同じスレッドに表示し、入力欄の近くでモデルとコンテキストを選択できるようにします。
 
 ```mermaid
 flowchart LR

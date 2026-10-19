@@ -2748,6 +2748,8 @@ struct ChatView: View {
   @State private var knowledgeSearchQuery = ""
   @State private var quickKnowledgeSearchQuery = ""
   @State private var selectedWorkspace: OnigiriWorkspace = .chat
+  @State private var isContextInspectorPresented = false
+  @State private var threadSearchQuery = ""
   @State private var showingExperienceFeedback = false
   @State private var showingWorkspaceActivity = false
   @State private var showingOnboardingManually = false
@@ -2858,11 +2860,20 @@ struct ChatView: View {
 
   var body: some View {
     HStack(spacing: 0) {
+      appRail
+      Divider()
       conversationSidebar
       Divider()
       chatWorkspace
+      if isContextInspectorPresented {
+        Divider()
+        contextInspector
+          .frame(width: 350)
+          .transition(.move(edge: .trailing).combined(with: .opacity))
+      }
     }
-    .frame(minWidth: 980, minHeight: 620)
+    .animation(.easeInOut(duration: 0.18), value: isContextInspectorPresented)
+    .frame(minWidth: 1_040, minHeight: 620)
     .task {
       do {
         _ = try OnigiriDataVault().prepareStorage()
@@ -2905,6 +2916,7 @@ struct ChatView: View {
     .onChange(of: selectedWorkspace) { _, workspace in
       lastWorkspaceRaw = workspace.rawValue
       if recordsWorkspaceActivity { workspaceActivityStore.record(workspace: workspace) }
+      if workspace != .chat { isContextInspectorPresented = true }
     }
     .onReceive(NotificationCenter.default.publisher(for: .selectOnigiriWorkspace)) { notification in
       if let workspace = notification.object as? OnigiriWorkspace {
@@ -3222,20 +3234,16 @@ struct ChatView: View {
 
   private var chatWorkspace: some View {
     VStack(alignment: .leading, spacing: 14) {
-      providerSettings
-      Divider()
-      knowledgeSettings
+      threadHeader
       Divider()
 
-      if selectedWorkspace == .chat && (messages.isEmpty || !hasCompletedOnboarding || showingOnboardingManually) {
+      if messages.isEmpty || !hasCompletedOnboarding || showingOnboardingManually {
         taskFirstStartCard
       }
 
-      if selectedWorkspace == .chat {
-        conversationProjectBridge
-        if messages.isEmpty == false && hasCompletedOnboarding && showingOnboardingManually == false {
-          contextualShortcutShelf
-        }
+      conversationProjectBridge
+      if messages.isEmpty == false && hasCompletedOnboarding && showingOnboardingManually == false {
+        contextualShortcutShelf
       }
 
       ScrollViewReader { proxy in
@@ -3324,6 +3332,65 @@ struct ChatView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
+  private var threadHeader: some View {
+    HStack(spacing: 10) {
+      VStack(alignment: .leading, spacing: 3) {
+        Text(selectedConversation?.title ?? (isEnglishUI ? "New conversation" : "新しい会話"))
+          .font(.title3.weight(.semibold))
+          .lineLimit(1)
+        HStack(spacing: 6) {
+          if let project = selectedChatProject {
+            Label(project.title.isEmpty ? (isEnglishUI ? "Untitled project" : "名称未設定") : project.title, systemImage: "target")
+          } else {
+            Label(isEnglishUI ? "Conversation" : "会話", systemImage: "bubble.left.and.bubble.right")
+          }
+          Text("·")
+          Text(modelID.isEmpty ? providerName : modelID)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
+      Spacer(minLength: 12)
+
+      Button {
+        selectedWorkspace = .knowledge
+        isContextInspectorPresented = true
+      } label: {
+        Label(
+          knowledgeStatus.documentCount == 0
+            ? (isEnglishUI ? "Context none" : "コンテキスト なし")
+            : (isEnglishUI ? "Context \(knowledgeStatus.documentCount)" : "コンテキスト \(knowledgeStatus.documentCount)"),
+          systemImage: "books.vertical")
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .help(isEnglishUI ? "Open documents and RAG context" : "資料とRAGコンテキストを開く")
+
+      if !webResearchQueue.sources.isEmpty {
+        Button {
+          selectedWorkspace = .explore
+          isContextInspectorPresented = true
+        } label: {
+          Label(isEnglishUI ? "Web \(webResearchQueue.sources.count)" : "Web \(webResearchQueue.sources.count)", systemImage: "safari")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+      }
+
+      Button {
+        isContextInspectorPresented.toggle()
+      } label: {
+        Image(systemName: isContextInspectorPresented ? "sidebar.trailing" : "sidebar.trailing")
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .accessibilityLabel(isContextInspectorPresented
+        ? (isEnglishUI ? "Close context inspector" : "コンテキストを閉じる")
+        : (isEnglishUI ? "Open context inspector" : "コンテキストを開く"))
+    }
+  }
+
   private var webResearchQueueLabel: String {
     if locale.identifier.lowercased().hasPrefix("ja") {
       return "次の質問にWebページ \(webResearchQueue.sources.count)件を使用"
@@ -3336,7 +3403,7 @@ struct ChatView: View {
       appHeader
       Divider()
       HStack {
-        Text("チャット")
+        Text(isEnglishUI ? "Threads" : "スレッド")
           .font(.headline)
         Spacer()
         Button {
@@ -3358,8 +3425,10 @@ struct ChatView: View {
         .help("新しい会話")
         .disabled(busy)
       }
+      TextField(isEnglishUI ? "Search threads" : "スレッドを検索", text: $threadSearchQuery)
+        .textFieldStyle(.roundedBorder)
       List(selection: $selectedConversationID) {
-        ForEach(conversations) { conversation in
+        ForEach(filteredConversations) { conversation in
           ConversationRow(conversation: conversation)
             .tag(conversation.id)
             .contextMenu {
@@ -3377,6 +3446,157 @@ struct ChatView: View {
     .padding(16)
     .frame(width: 330)
     .background(Color.secondary.opacity(0.05))
+  }
+
+  private var filteredConversations: [StoredConversation] {
+    let query = threadSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else { return conversations }
+    return conversations.filter { conversation in
+      conversation.title.localizedCaseInsensitiveContains(query)
+        || conversation.messages.contains { $0.content.localizedCaseInsensitiveContains(query) }
+    }
+  }
+
+  private var appRail: some View {
+    VStack(spacing: 12) {
+      Text("🍙")
+        .font(.system(size: 26))
+        .padding(.bottom, 6)
+        .accessibilityLabel("Onigiri Harness")
+
+      Button {
+        Task { await newConversation() }
+        selectedWorkspace = .chat
+        isContextInspectorPresented = false
+      } label: {
+        Image(systemName: "square.and.pencil")
+          .frame(width: 34, height: 30)
+      }
+      .buttonStyle(.borderedProminent)
+      .controlSize(.small)
+      .help(isEnglishUI ? "New conversation" : "新しい会話")
+      .disabled(busy)
+
+      Divider().padding(.vertical, 2)
+
+      railButton(.chat, title: isEnglishUI ? "Threads" : "スレッド", symbol: "bubble.left.and.bubble.right")
+      railButton(.knowledge, title: isEnglishUI ? "Context" : "資料", symbol: "books.vertical")
+      railButton(.build, title: isEnglishUI ? "Projects" : "プロジェクト", symbol: "target")
+      railButton(.explore, title: isEnglishUI ? "Research" : "リサーチ", symbol: "safari")
+
+      Spacer(minLength: 0)
+
+      railButton(.data, title: isEnglishUI ? "Settings" : "設定", symbol: "gearshape")
+    }
+    .padding(.vertical, 16)
+    .frame(width: 64)
+    .frame(maxHeight: .infinity)
+    .background(Color.secondary.opacity(0.035))
+  }
+
+  private func railButton(_ workspace: OnigiriWorkspace, title: String, symbol: String) -> some View {
+    let action = {
+      selectedWorkspace = workspace
+      isContextInspectorPresented = workspace != .chat
+    }
+    return Button {
+      action()
+    } label: {
+      Image(systemName: symbol)
+        .frame(width: 34, height: 30)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .controlSize(.small)
+    .background(selectedWorkspace == workspace ? Color.accentColor.opacity(0.18) : .clear)
+    .clipShape(RoundedRectangle(cornerRadius: 6))
+    .help(title)
+    .accessibilityLabel(title)
+  }
+
+  private var contextInspector: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack {
+        Label(inspectorTitle, systemImage: selectedWorkspace.symbol)
+          .font(.headline)
+        Spacer()
+        Button {
+          isContextInspectorPresented = false
+          selectedWorkspace = .chat
+        } label: {
+          Image(systemName: "xmark")
+            .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .accessibilityLabel(isEnglishUI ? "Close inspector" : "インスペクタを閉じる")
+      }
+      Divider()
+      ScrollView {
+        VStack(alignment: .leading, spacing: 14) {
+          inspectorContent
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 12)
+      }
+    }
+    .padding(16)
+    .frame(maxHeight: .infinity, alignment: .topLeading)
+    .background(Color.secondary.opacity(0.04))
+  }
+
+  private var inspectorTitle: String {
+    switch selectedWorkspace {
+    case .chat: return isEnglishUI ? "Thread details" : "スレッドの詳細"
+    case .knowledge: return isEnglishUI ? "Context" : "コンテキスト"
+    case .build: return isEnglishUI ? "Projects" : "プロジェクト"
+    case .explore: return isEnglishUI ? "Research" : "リサーチ"
+    case .data: return isEnglishUI ? "Settings" : "設定"
+    }
+  }
+
+  @ViewBuilder private var inspectorContent: some View {
+    switch selectedWorkspace {
+    case .chat:
+      providerSettings
+      if let project = selectedChatProject {
+        Divider()
+        Label(project.title, systemImage: "target")
+          .font(.subheadline.weight(.semibold))
+        Text(project.nextStep.isEmpty ? (isEnglishUI ? "No next step recorded." : "次の作業はまだ記録されていません。") : project.nextStep)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Button(isEnglishUI ? "Open project" : "プロジェクトを開く", systemImage: "arrow.up.right.square") {
+          projectToOpenID = project.id
+          showingVibeProjects = true
+        }
+      } else {
+        Button(isEnglishUI ? "Make this a project" : "この会話をプロジェクトにする", systemImage: "target") {
+          startProjectFromConversation()
+        }
+        .disabled(selectedConversation == nil)
+      }
+    case .knowledge:
+      Label(knowledgeStatusLabel, systemImage: "doc.text.magnifyingglass")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      knowledgePrimaryControls(horizontal: false)
+      workspaceControls
+    case .build:
+      Text(isEnglishUI ? "Create a project or return to a project already in progress." : "新しいプロジェクトを始めるか、進行中のプロジェクトへ戻ります。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      workspaceControls
+    case .explore:
+      Text(isEnglishUI ? "Research stays connected to the current thread. Open a browser only when you need it." : "リサーチは現在のスレッドとつながります。必要なときだけブラウザを開きます。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      workspaceControls
+    case .data:
+      providerSettings
+      Divider()
+      workspaceControls
+    }
   }
 
   private var selectedProviderNeedsLocalSettings: Bool {

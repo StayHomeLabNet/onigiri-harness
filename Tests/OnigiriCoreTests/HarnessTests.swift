@@ -1399,7 +1399,10 @@ private struct CancellableTestSession: ModelConversationSession {
   try Data(script.utf8).write(to: brew)
   try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: brew.path)
   let manager = ManagedLocalModelManager(rootURL: root.appending(path: "data", directoryHint: .isDirectory),
-                                         environment: ["ONIGIRI_BREW_PATH": brew.path])
+                                         environment: [
+                                           "ONIGIRI_BREW_PATH": brew.path,
+                                           "ONIGIRI_LLAMA_SERVER_PATH": root.appending(path: "missing-llama-server").path,
+                                         ])
   let pending = await manager.installRuntime()
   #expect(pending.runtimeInstallation.state == .installing)
   var completed = await manager.snapshot()

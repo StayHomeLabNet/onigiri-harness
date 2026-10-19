@@ -532,11 +532,12 @@ public actor ManagedLocalModelManager {
   }
 
   private func discoverRuntimePath(brewPath: String) async -> String? {
+    if let prefix = try? await runProcess(executable: brewPath, arguments: ["--prefix", "llama.cpp"]) {
+      let candidate = URL(fileURLWithPath: prefix.trimmingCharacters(in: .whitespacesAndNewlines)).appending(path: "bin/llama-server").path
+      if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+    }
     let direct = ["/opt/homebrew/bin/llama-server", "/usr/local/bin/llama-server"]
-    if let found = direct.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) { return found }
-    guard let prefix = try? await runProcess(executable: brewPath, arguments: ["--prefix", "llama.cpp"]) else { return nil }
-    let candidate = URL(fileURLWithPath: prefix.trimmingCharacters(in: .whitespacesAndNewlines)).appending(path: "bin/llama-server").path
-    return FileManager.default.isExecutableFile(atPath: candidate) ? candidate : nil
+    return direct.first(where: { FileManager.default.isExecutableFile(atPath: $0) })
   }
 
   private func runProcess(executable: String, arguments: [String]) async throws -> String {
