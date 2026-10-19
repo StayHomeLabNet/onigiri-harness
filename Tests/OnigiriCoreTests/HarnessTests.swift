@@ -1385,6 +1385,37 @@ private struct CancellableTestSession: ModelConversationSession {
   #expect(decoded.sourceRevision == nil)
 }
 
+@Test func localModelCustomCatalogValidatesPinnedHubModelsAndImportsGGUF() async throws {
+  let root = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appending(path: "OnigiriLocalCatalogTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let manager = ManagedLocalModelManager(rootURL: root, environment: [:])
+  let minimalRequest = try JSONDecoder().decode(CustomHuggingFaceModelRequest.self, from: Data(#"{"name":"Minimal","repository":"example/model","revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileName":"model.gguf"}"#.utf8))
+  #expect(minimalRequest.license == "Unknown")
+  #expect(minimalRequest.languages.isEmpty)
+  let hub = CustomHuggingFaceModelRequest(name: "Custom Qwen", repository: "example/custom-gguf",
+                                          revision: String(repeating: "a", count: 40), fileName: "custom-q4.gguf",
+                                          license: "Apache-2.0", recommendedMemoryBytes: 2_000_000_000)
+  let registered = try await manager.addHuggingFaceModel(hub)
+  let custom = try #require(registered.catalog.first { $0.source == .huggingFace })
+  #expect(custom.downloadURL == "https://huggingface.co/example/custom-gguf/resolve/\(hub.revision)/custom-q4.gguf")
+  #expect(custom.id.hasPrefix("hf-"))
+  do {
+    _ = try await manager.addHuggingFaceModel(.init(name: "Unpinned", repository: "example/model", revision: "main", fileName: "model.gguf"))
+    Issue.record("A branch must not be accepted as a reproducible custom catalog revision")
+  } catch let error as ManagedLocalModelError {
+    guard case .invalidCustomCatalogEntry = error else { Issue.record("Unexpected error: \(error)"); return }
+  }
+  let file = root.appending(path: "sample.gguf")
+  var fixture = Data("GGUF".utf8)
+  fixture.append(Data(repeating: 0, count: 1_024))
+  try fixture.write(to: file)
+  let imported = try await manager.importLocalModel(.init(filePath: file.path, name: "Imported sample"))
+  let local = try #require(imported.catalog.first { $0.source == .localImport })
+  #expect(imported.records.first { $0.id == local.id }?.state == .downloaded)
+  #expect(imported.records.first { $0.id == local.id }?.localFileName != nil)
+}
+
 @Test func localModelWorkloadProfilesDefineCasesForBothLanguages() async throws {
   #expect(ManagedLocalModelWorkload.allCases.count == 4)
   for workload in ManagedLocalModelWorkload.allCases {

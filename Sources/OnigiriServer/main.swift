@@ -192,6 +192,18 @@ final class HTTPConnection: @unchecked Sendable {
         }
         do { sendJSON(200, try await managedLocalModelManager.setRuntimePath(request.runtimePath)) }
         catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
+      } else if method == "POST", path == "/local-models/catalog/huggingface" {
+        guard isJSON(headers), let request = try? JSONDecoder().decode(CustomHuggingFaceModelRequest.self, from: body) else {
+          sendJSON(400, APIError(error: "Hugging Faceモデル情報のJSONが必要です。")); return
+        }
+        do { sendJSON(200, try await managedLocalModelManager.addHuggingFaceModel(request)) }
+        catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
+      } else if method == "POST", path == "/local-models/import" {
+        guard isJSON(headers), let request = try? JSONDecoder().decode(LocalModelImportRequest.self, from: body) else {
+          sendJSON(400, APIError(error: "GGUFファイルのパスが必要です。")); return
+        }
+        do { sendJSON(200, try await managedLocalModelManager.importLocalModel(request)) }
+        catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
       } else if method == "POST", path == "/local-models/download" {
         guard isJSON(headers), let request = try? JSONDecoder().decode(ManagedLocalModelActionRequest.self, from: body) else {
           sendJSON(400, APIError(error: "JSON の id が必要です。")); return
@@ -821,7 +833,8 @@ final class HTTPConnection: @unchecked Sendable {
     case HarnessError.invalidDocument: return 400
     case HarnessError.busy: return 429
     case HarnessError.unavailable: return 503
-    case ManagedLocalModelError.notDownloaded, ManagedLocalModelError.catalogEntryNotFound, ManagedLocalModelError.invalidRuntime: return 400
+    case ManagedLocalModelError.notDownloaded, ManagedLocalModelError.catalogEntryNotFound, ManagedLocalModelError.invalidRuntime,
+      ManagedLocalModelError.invalidCustomCatalogEntry, ManagedLocalModelError.invalidLocalModelFile: return 400
     case ManagedLocalModelError.runtimeUnavailable: return 503
     case ManagedLocalModelError.modelIsDownloading, ManagedLocalModelError.modelNotLoaded: return 409
     default: return 500

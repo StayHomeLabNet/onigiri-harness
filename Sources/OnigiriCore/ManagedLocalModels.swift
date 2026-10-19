@@ -1,8 +1,13 @@
 import CryptoKit
 import Foundation
 
+public enum ManagedLocalModelCatalogSource: String, Codable, Sendable {
+  case shipped, huggingFace, localImport
+}
+
 public struct ManagedLocalModelCatalogEntry: Codable, Sendable, Identifiable, Equatable {
   public let id: String
+  public let source: ManagedLocalModelCatalogSource
   public let name: String
   public let publisher: String
   public let repository: String
@@ -17,11 +22,11 @@ public struct ManagedLocalModelCatalogEntry: Codable, Sendable, Identifiable, Eq
   public let languages: [String]
   public let useCase: String
 
-  public init(id: String, name: String, publisher: String, repository: String, revision: String,
+  public init(id: String, source: ManagedLocalModelCatalogSource = .shipped, name: String, publisher: String, repository: String, revision: String,
               fileName: String, downloadURL: String, license: String, parameterCount: String,
               quantization: String, downloadBytes: Int64, recommendedMemoryBytes: Int64,
               languages: [String], useCase: String) {
-    self.id = id; self.name = name; self.publisher = publisher; self.repository = repository
+    self.id = id; self.source = source; self.name = name; self.publisher = publisher; self.repository = repository
     self.revision = revision; self.fileName = fileName; self.downloadURL = downloadURL
     self.license = license; self.parameterCount = parameterCount; self.quantization = quantization
     self.downloadBytes = downloadBytes; self.recommendedMemoryBytes = recommendedMemoryBytes
@@ -273,6 +278,44 @@ public struct ManagedLocalModelBenchmarkRequest: Codable, Sendable {
   public init(id: String, workload: ManagedLocalModelWorkload = .general) { self.id = id; self.workload = workload }
 }
 
+public struct CustomHuggingFaceModelRequest: Codable, Sendable {
+  public let name: String
+  public let repository: String
+  public let revision: String
+  public let fileName: String
+  public let license: String
+  public let parameterCount: String
+  public let quantization: String
+  public let recommendedMemoryBytes: Int64
+  public let languages: [String]
+  public let useCase: String
+  public init(name: String, repository: String, revision: String, fileName: String, license: String = "Unknown", parameterCount: String = "Unknown", quantization: String = "GGUF", recommendedMemoryBytes: Int64 = 0, languages: [String] = [], useCase: String = "Custom Hugging Face GGUF") {
+    self.name = name; self.repository = repository; self.revision = revision; self.fileName = fileName
+    self.license = license; self.parameterCount = parameterCount; self.quantization = quantization
+    self.recommendedMemoryBytes = recommendedMemoryBytes; self.languages = languages; self.useCase = useCase
+  }
+  private enum CodingKeys: String, CodingKey { case name, repository, revision, fileName, license, parameterCount, quantization, recommendedMemoryBytes, languages, useCase }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    name = try values.decode(String.self, forKey: .name)
+    repository = try values.decode(String.self, forKey: .repository)
+    revision = try values.decode(String.self, forKey: .revision)
+    fileName = try values.decode(String.self, forKey: .fileName)
+    license = try values.decodeIfPresent(String.self, forKey: .license) ?? "Unknown"
+    parameterCount = try values.decodeIfPresent(String.self, forKey: .parameterCount) ?? "Unknown"
+    quantization = try values.decodeIfPresent(String.self, forKey: .quantization) ?? "GGUF"
+    recommendedMemoryBytes = try values.decodeIfPresent(Int64.self, forKey: .recommendedMemoryBytes) ?? 0
+    languages = try values.decodeIfPresent([String].self, forKey: .languages) ?? []
+    useCase = try values.decodeIfPresent(String.self, forKey: .useCase) ?? "Custom Hugging Face GGUF"
+  }
+}
+
+public struct LocalModelImportRequest: Codable, Sendable {
+  public let filePath: String
+  public let name: String?
+  public init(filePath: String, name: String? = nil) { self.filePath = filePath; self.name = name }
+}
+
 public enum ManagedLocalModelError: LocalizedError {
   case catalogEntryNotFound
   case notDownloaded
@@ -282,6 +325,8 @@ public enum ManagedLocalModelError: LocalizedError {
   case invalidRuntime
   case noPartialDownload
   case modelNotLoaded
+  case invalidCustomCatalogEntry
+  case invalidLocalModelFile
 
   public var errorDescription: String? {
     switch self {
@@ -293,6 +338,8 @@ public enum ManagedLocalModelError: LocalizedError {
     case .invalidRuntime: return "llama-server の実行ファイルを指定してください。"
     case .noPartialDownload: return "再開できる未完了ダウンロードがありません。"
     case .modelNotLoaded: return "受入テストを実行するには、対象モデルをロードしてください。"
+    case .invalidCustomCatalogEntry: return "Hugging Faceのリポジトリ、固定コミット、GGUFファイル名を確認してください。"
+    case .invalidLocalModelFile: return "有効なGGUFファイルを選択してください。"
     }
   }
 }
@@ -306,6 +353,8 @@ public actor ManagedLocalModelManager {
   private let modelsURL: URL
   private let stateURL: URL
   private let benchmarksURL: URL
+  private let customCatalogURL: URL
+  private var customCatalog: [ManagedLocalModelCatalogEntry] = []
   private var records: [String: ManagedLocalModelRecord] = [:]
   private var benchmarks: [ManagedLocalModelBenchmarkRun] = []
   private var runtimePath: String
@@ -319,6 +368,7 @@ public actor ManagedLocalModelManager {
     self.modelsURL = rootURL.appending(path: "models", directoryHint: .isDirectory)
     self.stateURL = rootURL.appending(path: "state.json")
     self.benchmarksURL = rootURL.appending(path: "benchmarks.json")
+    self.customCatalogURL = rootURL.appending(path: "catalog.json")
     self.runtimePath = environment["ONIGIRI_LLAMA_SERVER_PATH"] ?? "/opt/homebrew/bin/llama-server"
     try? FileManager.default.createDirectory(at: modelsURL, withIntermediateDirectories: true)
     if let data = try? Data(contentsOf: stateURL), let saved = try? JSONDecoder().decode(SavedState.self, from: data) {
@@ -328,21 +378,31 @@ public actor ManagedLocalModelManager {
     if let data = try? Data(contentsOf: benchmarksURL), let saved = try? JSONDecoder().decode([ManagedLocalModelBenchmarkRun].self, from: data) {
       self.benchmarks = Array(saved.prefix(20))
     }
+    if let data = try? Data(contentsOf: customCatalogURL), let saved = try? JSONDecoder().decode([ManagedLocalModelCatalogEntry].self, from: data) {
+      self.customCatalog = saved.filter { $0.source != .shipped }
+    }
   }
 
   deinit { runtimeProcess?.terminate() }
 
   public func snapshot() -> ManagedLocalModelsResponse {
-    ManagedLocalModelsResponse(
-      catalog: ManagedLocalModelCatalog.entries,
-      records: ManagedLocalModelCatalog.entries.map { records[$0.id] ?? ManagedLocalModelRecord(id: $0.id) },
+    let catalog = allCatalogEntries
+    return ManagedLocalModelsResponse(
+      catalog: catalog,
+      records: catalog.map { records[$0.id] ?? ManagedLocalModelRecord(id: $0.id) },
       runtimePath: runtimePath, runtimeAvailable: FileManager.default.isExecutableFile(atPath: runtimePath),
       totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory), loadedModelID: loadedModelID,
       benchmarks: benchmarks.sorted { $0.completedAt > $1.completedAt },
       comparisons: Dictionary(uniqueKeysWithValues: ManagedLocalModelWorkload.allCases.map { workload in
-        (workload.rawValue, ManagedLocalModelComparison.make(catalog: ManagedLocalModelCatalog.entries,
+        (workload.rawValue, ManagedLocalModelComparison.make(catalog: catalog,
           benchmarks: benchmarks.filter { $0.workload == workload }, totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory)))
       }))
+  }
+
+  private var allCatalogEntries: [ManagedLocalModelCatalogEntry] { ManagedLocalModelCatalog.entries + customCatalog }
+
+  private func entry(id: String) -> ManagedLocalModelCatalogEntry? {
+    allCatalogEntries.first { $0.id == id }
   }
 
   public func setRuntimePath(_ path: String) throws -> ManagedLocalModelsResponse {
@@ -353,8 +413,59 @@ public actor ManagedLocalModelManager {
     return snapshot()
   }
 
+  public func addHuggingFaceModel(_ request: CustomHuggingFaceModelRequest) throws -> ManagedLocalModelsResponse {
+    let repository = request.repository.trimmingCharacters(in: .whitespacesAndNewlines)
+    let revision = request.revision.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let fileName = request.fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let validRepository = repository.range(of: #"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"#, options: .regularExpression) != nil
+    let validRevision = revision.range(of: #"^[0-9a-f]{40}$"#, options: .regularExpression) != nil
+    guard validRepository, validRevision, !fileName.contains("/"), fileName.lowercased().hasSuffix(".gguf") else {
+      throw ManagedLocalModelError.invalidCustomCatalogEntry
+    }
+    let canonical = "\(repository)@\(revision)/\(fileName)"
+    let id = "hf-" + SHA256.hash(data: Data(canonical.utf8)).prefix(10).map { String(format: "%02x", $0) }.joined()
+    guard !allCatalogEntries.contains(where: { $0.id == id }) else { return snapshot() }
+    let name = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let entry = ManagedLocalModelCatalogEntry(
+      id: id, source: .huggingFace, name: name.isEmpty ? fileName : name, publisher: repository.split(separator: "/").first.map(String.init) ?? "Hugging Face",
+      repository: repository, revision: revision, fileName: fileName,
+      downloadURL: "https://huggingface.co/\(repository)/resolve/\(revision)/\(fileName)",
+      license: nonEmpty(request.license, fallback: "Unknown"),
+      parameterCount: nonEmpty(request.parameterCount, fallback: "Unknown"),
+      quantization: nonEmpty(request.quantization, fallback: "GGUF"),
+      downloadBytes: 0, recommendedMemoryBytes: max(0, request.recommendedMemoryBytes),
+      languages: request.languages, useCase: nonEmpty(request.useCase, fallback: "Custom Hugging Face GGUF"))
+    customCatalog.append(entry)
+    try persistCustomCatalog()
+    return snapshot()
+  }
+
+  public func importLocalModel(_ request: LocalModelImportRequest) throws -> ManagedLocalModelsResponse {
+    let source = URL(fileURLWithPath: request.filePath).standardizedFileURL
+    guard source.pathExtension.lowercased() == "gguf", FileManager.default.isReadableFile(atPath: source.path), isGGUF(source) else {
+      throw ManagedLocalModelError.invalidLocalModelFile
+    }
+    let id = "local-" + UUID().uuidString.lowercased()
+    let safeName = "\(id).gguf"
+    let destination = modelsURL.appending(path: safeName)
+    try FileManager.default.createDirectory(at: modelsURL, withIntermediateDirectories: true)
+    try FileManager.default.copyItem(at: source, to: destination)
+    let bytes = fileSize(at: destination)
+    let requestedName = request.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let name = requestedName?.isEmpty == false ? requestedName! : source.deletingPathExtension().lastPathComponent
+    let entry = ManagedLocalModelCatalogEntry(
+      id: id, source: .localImport, name: name, publisher: "Local import", repository: "", revision: "local",
+      fileName: source.lastPathComponent, downloadURL: "", license: "Verify source license", parameterCount: "Unknown",
+      quantization: "GGUF", downloadBytes: bytes, recommendedMemoryBytes: 0, languages: [], useCase: "Imported local GGUF")
+    customCatalog.append(entry)
+    records[id] = ManagedLocalModelRecord(id: id, state: .downloaded, localFileName: safeName, downloadedBytes: bytes,
+                                           sha256: try sha256(of: destination), sourceRevision: "local", expectedBytes: bytes, updatedAt: Date())
+    try persistCustomCatalog(); try persist()
+    return snapshot()
+  }
+
   public func download(id: String) throws -> ManagedLocalModelsResponse {
-    guard let entry = ManagedLocalModelCatalog.entries.first(where: { $0.id == id }) else {
+    guard let entry = entry(id: id) else {
       throw ManagedLocalModelError.catalogEntryNotFound
     }
     guard URL(string: entry.downloadURL)?.host == "huggingface.co", entry.downloadURL.contains("/resolve/") else {
@@ -374,7 +485,7 @@ public actor ManagedLocalModelManager {
   }
 
   public func cancelDownload(id: String) throws -> ManagedLocalModelsResponse {
-    guard let entry = ManagedLocalModelCatalog.entries.first(where: { $0.id == id }) else {
+    guard let entry = entry(id: id) else {
       throw ManagedLocalModelError.catalogEntryNotFound
     }
     guard records[id]?.state == .downloading else { return snapshot() }
@@ -389,7 +500,7 @@ public actor ManagedLocalModelManager {
   }
 
   public func load(id: String) async throws -> ProviderConfig {
-    guard ManagedLocalModelCatalog.entries.contains(where: { $0.id == id }) else {
+    guard entry(id: id) != nil else {
       throw ManagedLocalModelError.catalogEntryNotFound
     }
     guard let record = records[id], record.state != .downloading else {
@@ -463,7 +574,7 @@ public actor ManagedLocalModelManager {
   }
 
   public func delete(id: String) throws -> ManagedLocalModelsResponse {
-    guard let entry = ManagedLocalModelCatalog.entries.first(where: { $0.id == id }) else {
+    guard let entry = entry(id: id) else {
       throw ManagedLocalModelError.catalogEntryNotFound
     }
     if loadedModelID == id { _ = try unload() }
@@ -473,6 +584,11 @@ public actor ManagedLocalModelManager {
     }
     try? FileManager.default.removeItem(at: partialURL(for: entry))
     records[id] = ManagedLocalModelRecord(id: id, state: .notDownloaded, updatedAt: Date())
+    if entry.source != .shipped {
+      customCatalog.removeAll { $0.id == id }
+      records.removeValue(forKey: id)
+      try persistCustomCatalog()
+    }
     try persist()
     return snapshot()
   }
@@ -614,6 +730,22 @@ public actor ManagedLocalModelManager {
       try await Task.sleep(for: .milliseconds(250))
     }
     throw HarnessError.unavailable("llama-server の起動を確認できませんでした。モデル形式または実行環境を確認してください。")
+  }
+
+  private func nonEmpty(_ value: String, fallback: String) -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? fallback : trimmed
+  }
+
+  private func isGGUF(_ url: URL) -> Bool {
+    guard fileSize(at: url) > 1_024, let handle = try? FileHandle(forReadingFrom: url) else { return false }
+    defer { try? handle.close() }
+    return (try? handle.read(upToCount: 4)).flatMap { String(data: $0, encoding: .utf8) } == "GGUF"
+  }
+
+  private func persistCustomCatalog() throws {
+    try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+    try JSONEncoder().encode(customCatalog).write(to: customCatalogURL, options: [.atomic])
   }
 
   private func sha256(of url: URL) throws -> String {

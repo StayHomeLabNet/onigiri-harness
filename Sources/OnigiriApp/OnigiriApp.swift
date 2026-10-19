@@ -199,6 +199,12 @@ private struct LocalModelsSettingsView: View {
   @State private var message: String?
   @State private var loading = false
   @State private var selectedWorkload: ManagedLocalModelWorkload = .general
+  @State private var customName = ""
+  @State private var customRepository = ""
+  @State private var customRevision = ""
+  @State private var customFileName = ""
+  @State private var customLicense = "Unknown"
+  @State private var customMemoryGB = ""
 
   private var english: Bool { languageCode == AppLanguage.english.rawValue }
 
@@ -240,6 +246,29 @@ private struct LocalModelsSettingsView: View {
       if let response, let report = response.comparisons[selectedWorkload.rawValue], !report.rows.isEmpty {
         Section(english ? "Comparison and recommendation" : "比較とおすすめ") {
           comparisonSummary(response, report: report)
+        }
+      }
+
+      Section(english ? "Add a model" : "モデルを追加") {
+        DisclosureGroup(english ? "Register Hugging Face GGUF" : "Hugging Face GGUFを登録") {
+          TextField(english ? "Display name" : "表示名", text: $customName)
+          TextField(english ? "Repository (owner/repository)" : "リポジトリ（owner/repository）", text: $customRepository)
+          TextField(english ? "Pinned commit SHA (40 characters)" : "固定コミットSHA（40文字）", text: $customRevision)
+          TextField(english ? "GGUF filename" : "GGUFファイル名", text: $customFileName)
+          TextField(english ? "License" : "ライセンス", text: $customLicense)
+          HStack {
+            TextField(english ? "Recommended memory (GB, optional)" : "推奨メモリ（GB、任意）", text: $customMemoryGB)
+            Button(english ? "Add to catalog" : "カタログに追加") { Task { await addHuggingFaceModel() } }
+              .disabled(customRepository.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || customRevision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || customFileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || loading)
+          }
+          Text(english ? "Only Hugging Face GGUF files pinned to a 40-character commit SHA can be registered. Review the model card and license before download." : "40文字のコミットSHAで固定したHugging FaceのGGUFファイルだけを登録できます。ダウンロード前にモデルカードとライセンスを確認してください。")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        DisclosureGroup(english ? "Import local GGUF" : "ローカルGGUFを取り込む") {
+          Button(english ? "Choose GGUF file…" : "GGUFファイルを選択…") { chooseLocalGGUF() }
+            .disabled(loading)
+          Text(english ? "The file header is checked, then a copy is stored in Onigiri's managed model folder. The original file stays untouched." : "ファイルヘッダーを確認した後、Onigiriの管理フォルダへコピーします。元のファイルは変更しません。")
+            .font(.caption).foregroundStyle(.secondary)
         }
       }
 
@@ -315,11 +344,16 @@ private struct LocalModelsSettingsView: View {
       }
       Text(english ? entry.useCase.replacingOccurrences(of: "軽量な日常会話・文章作成", with: "Lightweight chat and writing").replacingOccurrences(of: "品質を優先する日常会話・RAG", with: "Higher-quality chat and RAG") : entry.useCase)
         .font(.caption).foregroundStyle(.secondary)
-      Text("GGUF · \(ByteCountFormatter.string(fromByteCount: entry.downloadBytes, countStyle: .file)) · \(english ? "Recommended memory" : "推奨メモリ"): \(ByteCountFormatter.string(fromByteCount: entry.recommendedMemoryBytes, countStyle: .memory))")
+      Text("GGUF · \(entry.downloadBytes > 0 ? ByteCountFormatter.string(fromByteCount: entry.downloadBytes, countStyle: .file) : (english ? "Size not provided" : "サイズ未登録")) · \(english ? "Recommended memory" : "推奨メモリ"): \(entry.recommendedMemoryBytes > 0 ? ByteCountFormatter.string(fromByteCount: entry.recommendedMemoryBytes, countStyle: .memory) : (english ? "Not provided" : "未登録"))")
         .font(.caption).foregroundStyle(.secondary)
       HStack {
-        Link(english ? "Source and license" : "取得元・ライセンス", destination: URL(string: "https://huggingface.co/\(entry.repository)")!)
-          .font(.caption)
+        if entry.source == .localImport {
+          Label(english ? "Imported from this Mac" : "このMacから取り込み", systemImage: "internaldrive")
+            .font(.caption).foregroundStyle(.secondary)
+        } else if let sourceURL = URL(string: "https://huggingface.co/\(entry.repository)") {
+          Link(english ? "Source and license" : "取得元・ライセンス", destination: sourceURL)
+            .font(.caption)
+        }
         Spacer()
         if state == .notDownloaded || state == .failed {
           Button(record?.downloadedBytes ?? 0 > 0 ? (english ? "Resume download" : "ダウンロードを再開") : (english ? "Download" : "ダウンロード")) {
@@ -424,6 +458,40 @@ private struct LocalModelsSettingsView: View {
       await refresh()
     } catch { message = error.localizedDescription }
   }
+  private func addHuggingFaceModel() async {
+    loading = true
+    defer { loading = false }
+    do {
+      let memory = Int64((Double(customMemoryGB.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0) * 1_000_000_000)
+      let request = CustomHuggingFaceModelRequest(name: customName, repository: customRepository, revision: customRevision,
+                                                   fileName: customFileName, license: customLicense, recommendedMemoryBytes: memory)
+      _ = try await send(path: "/local-models/catalog/huggingface", body: JSONEncoder().encode(request))
+      customName = ""; customRepository = ""; customRevision = ""; customFileName = ""; customMemoryGB = ""
+      message = english ? "The Hugging Face GGUF was added to the catalog." : "Hugging Face GGUFをカタログへ追加しました。"
+      await refresh()
+    } catch { message = error.localizedDescription }
+  }
+
+  @MainActor private func chooseLocalGGUF() {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [UTType(filenameExtension: "gguf") ?? .data]
+    panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+    panel.prompt = english ? "Import GGUF" : "GGUFを取り込む"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    Task { await importLocalModel(url) }
+  }
+
+  private func importLocalModel(_ url: URL) async {
+    loading = true
+    defer { loading = false }
+    do {
+      let request = LocalModelImportRequest(filePath: url.path)
+      _ = try await send(path: "/local-models/import", body: JSONEncoder().encode(request))
+      message = english ? "The local GGUF was copied into Onigiri's managed model folder." : "ローカルGGUFをOnigiriの管理モデルフォルダへコピーしました。"
+      await refresh()
+    } catch { message = error.localizedDescription }
+  }
+
   private func action(_ path: String, id: String) async {
     do {
       let body = try JSONEncoder().encode(ManagedLocalModelActionRequest(id: id))

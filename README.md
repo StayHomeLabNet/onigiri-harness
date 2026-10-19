@@ -172,6 +172,8 @@ curl --no-buffer --max-time 120 http://127.0.0.1:18080/chat/stream \
 - `POST /local-models/runtime`: `{"runtimePath":"/path/to/llama-server"}` で実行環境を保存します。
 - `POST /local-models/download`、`POST /local-models/cancel`、`POST /local-models/load`、`POST /local-models/unload`、`POST /local-models/delete`: `{"id":"..."}` でモデル取得、loopbackへのロード、解除、削除を行います。
 - `POST /local-models/benchmark`: `{"id":"...","workload":"general"}` のように用途プロファイルを指定して、ロード済みモデルへ日英の受入ケースを送り、結果・遅延・RSSを保存して返します。`workload`は `general`（日常会話）、`grounded`（資料を使う回答）、`writing`（文章作成）、`coding`（コーディング）です。比較と推奨は用途ごとに分かれます。
+- `POST /local-models/catalog/huggingface`: 固定コミットSHA、`owner/repository`、GGUFファイル名を渡してHugging Faceモデルをカタログへ追加します。任意URLやブランチ指定は受け付けません。
+- `POST /local-models/import`: `{"filePath":"/path/to/model.gguf"}` でローカルGGUFを検証してOnigiri管理領域へコピーします。元ファイルは変更しません。
 - `GET /v1/models`: OpenAI互換形式で`onigiri/current`、現在Providerのモデル、`profile/<UUID>`を返します。
 - `POST /v1/chat/completions`: OpenAI互換の非Streaming／SSE Streaming Chat Completionsです。任意の`onigiri`拡張でProfile、RAGモード、検索設定、コンテキスト上限、選択チャンクを指定できます。
 - `GET /agents/status`: Codex、Antigravity、Claude Code CLIの検出結果と実行ファイルの場所を返します。

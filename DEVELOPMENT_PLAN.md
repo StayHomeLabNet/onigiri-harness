@@ -78,6 +78,7 @@ flowchart LR
 | 1.12 — Local Model Acceptance & Benchmarking | 実装済み | ロード済みモデルへ日英の短い受入ケースを実行し、成功率、応答時間、出力量、推論プロセスRSSを保存・表示 |
 | 1.13 — Local Model Comparison & Recommendation | 実装済み | 受入結果を横並びで比較し、成功率、平均遅延、RSS、メモリ適合からこのMac向け・低メモリ向けを推薦 |
 | 1.14 — Local Model Workload Profiles | 実装済み | 日常会話、資料を使う回答、文章作成、コーディングごとに受入ケース、比較、推奨を分離して保存・表示 |
+| 1.15 — Local Model Import & Custom Catalog | 実装済み | ローカルGGUFの検証・専用領域への取込、固定コミット指定のHugging Face GGUFカタログ登録、カスタムモデルのロード・用途別評価を追加 |
 
 ## Parent Phase 2 — Vibe Build Workspace
 
