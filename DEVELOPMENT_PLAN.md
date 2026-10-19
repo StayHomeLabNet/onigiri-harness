@@ -79,6 +79,7 @@ flowchart LR
 | 1.13 — Local Model Comparison & Recommendation | 実装済み | 受入結果を横並びで比較し、成功率、平均遅延、RSS、メモリ適合からこのMac向け・低メモリ向けを推薦 |
 | 1.14 — Local Model Workload Profiles | 実装済み | 日常会話、資料を使う回答、文章作成、コーディングごとに受入ケース、比較、推奨を分離して保存・表示 |
 | 1.15 — Local Model Import & Custom Catalog | 実装済み | ローカルGGUFの検証・専用領域への取込、固定コミット指定のHugging Face GGUFカタログ登録、カスタムモデルのロード・用途別評価を追加 |
+| 1.16 — Local Model Metadata & Integrity Verification | 任意・保留 | モデルカードURL、ライセンス確認、SHA-256再照合、用途メモ、再取得時の内容変更検出を追加 |
 
 ## Parent Phase 2 — Vibe Build Workspace
 
