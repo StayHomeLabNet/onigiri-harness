@@ -170,6 +170,7 @@ curl --no-buffer --max-time 120 http://127.0.0.1:18080/chat/stream \
 - `GET /models`: 現在の provider が返すモデル ID 一覧を返します。Apple Foundation Models では空配列です。
 - `GET /local-models`: Onigiri管理GGUFのカタログ、取得・ロード状態、llama-serverのパス、搭載メモリを返します。
 - `POST /local-models/runtime`: `{"runtimePath":"/path/to/llama-server"}` で実行環境を保存します。
+- `POST /local-models/runtime/install`: Homebrewが導入済みのMacで、`brew install llama.cpp` を開始し、完了後に検出した `llama-server` を自動設定します。
 - `POST /local-models/download`、`POST /local-models/cancel`、`POST /local-models/load`、`POST /local-models/unload`、`POST /local-models/delete`: `{"id":"..."}` でモデル取得、loopbackへのロード、解除、削除を行います。
 - `POST /local-models/benchmark`: `{"id":"...","workload":"general"}` のように用途プロファイルを指定して、ロード済みモデルへ日英の受入ケースを送り、結果・遅延・RSSを保存して返します。`workload`は `general`（日常会話）、`grounded`（資料を使う回答）、`writing`（文章作成）、`coding`（コーディング）です。比較と推奨は用途ごとに分かれます。
 - `POST /local-models/catalog/huggingface`: 固定コミットSHA、`owner/repository`、GGUFファイル名を渡してHugging Faceモデルをカタログへ追加します。任意URLやブランチ指定は受け付けません。

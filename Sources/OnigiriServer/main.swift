@@ -192,6 +192,8 @@ final class HTTPConnection: @unchecked Sendable {
         }
         do { sendJSON(200, try await managedLocalModelManager.setRuntimePath(request.runtimePath)) }
         catch { sendJSON(statusCode(for: error), APIError(error: error.localizedDescription)) }
+      } else if method == "POST", path == "/local-models/runtime/install" {
+        sendJSON(200, await managedLocalModelManager.installRuntime())
       } else if method == "POST", path == "/local-models/catalog/huggingface" {
         guard isJSON(headers), let request = try? JSONDecoder().decode(CustomHuggingFaceModelRequest.self, from: body) else {
           sendJSON(400, APIError(error: "Hugging Faceモデル情報のJSONが必要です。")); return

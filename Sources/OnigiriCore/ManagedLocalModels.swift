@@ -61,6 +61,19 @@ public enum ManagedLocalModelState: String, Codable, Sendable {
   case notDownloaded, downloading, downloaded, loaded, failed
 }
 
+public enum ManagedLocalRuntimeInstallState: String, Codable, Sendable {
+  case ready, installing, unavailable, failed
+}
+
+public struct ManagedLocalRuntimeInstallation: Codable, Sendable, Equatable {
+  public let state: ManagedLocalRuntimeInstallState
+  public let brewPath: String?
+  public let detail: String
+  public init(state: ManagedLocalRuntimeInstallState, brewPath: String? = nil, detail: String) {
+    self.state = state; self.brewPath = brewPath; self.detail = detail
+  }
+}
+
 public struct ManagedLocalModelRecord: Codable, Sendable, Identifiable, Equatable {
   public let id: String
   public var state: ManagedLocalModelState
@@ -243,16 +256,21 @@ public struct ManagedLocalModelsResponse: Codable, Sendable {
   public let records: [ManagedLocalModelRecord]
   public let runtimePath: String
   public let runtimeAvailable: Bool
+  public let runtimeInstallation: ManagedLocalRuntimeInstallation
   public let totalMemoryBytes: Int64
   public let loadedModelID: String?
   public let benchmarks: [ManagedLocalModelBenchmarkRun]
   public let comparisons: [String: ManagedLocalModelComparisonReport]
 
   public init(catalog: [ManagedLocalModelCatalogEntry], records: [ManagedLocalModelRecord], runtimePath: String,
-              runtimeAvailable: Bool, totalMemoryBytes: Int64, loadedModelID: String?, benchmarks: [ManagedLocalModelBenchmarkRun] = [],
+              runtimeAvailable: Bool, runtimeInstallation: ManagedLocalRuntimeInstallation? = nil,
+              totalMemoryBytes: Int64, loadedModelID: String?, benchmarks: [ManagedLocalModelBenchmarkRun] = [],
               comparisons: [String: ManagedLocalModelComparisonReport]? = nil) {
     self.catalog = catalog; self.records = records; self.runtimePath = runtimePath
-    self.runtimeAvailable = runtimeAvailable; self.totalMemoryBytes = totalMemoryBytes; self.loadedModelID = loadedModelID
+    self.runtimeAvailable = runtimeAvailable
+    self.runtimeInstallation = runtimeInstallation ?? .init(state: runtimeAvailable ? .ready : .unavailable,
+      detail: runtimeAvailable ? "llama-server is ready." : "llama-server was not found.")
+    self.totalMemoryBytes = totalMemoryBytes; self.loadedModelID = loadedModelID
     self.benchmarks = benchmarks
     self.comparisons = comparisons ?? Dictionary(uniqueKeysWithValues: ManagedLocalModelWorkload.allCases.map { workload in
       (workload.rawValue, ManagedLocalModelComparison.make(catalog: catalog, benchmarks: benchmarks.filter { $0.workload == workload }, totalMemoryBytes: totalMemoryBytes))
@@ -358,6 +376,9 @@ public actor ManagedLocalModelManager {
   private var records: [String: ManagedLocalModelRecord] = [:]
   private var benchmarks: [ManagedLocalModelBenchmarkRun] = []
   private var runtimePath: String
+  private let preferredBrewPath: String?
+  private var runtimeInstallation: ManagedLocalRuntimeInstallation
+  private var runtimeInstallTask: Task<Void, Never>?
   private var loadedModelID: String?
   private var runtimeProcess: Process?
   private var downloadTasks: [String: Task<Void, Never>] = [:]
@@ -370,11 +391,17 @@ public actor ManagedLocalModelManager {
     self.benchmarksURL = rootURL.appending(path: "benchmarks.json")
     self.customCatalogURL = rootURL.appending(path: "catalog.json")
     self.runtimePath = environment["ONIGIRI_LLAMA_SERVER_PATH"] ?? "/opt/homebrew/bin/llama-server"
+    let configuredBrewPath = environment["ONIGIRI_BREW_PATH"]
+    self.preferredBrewPath = configuredBrewPath
+    self.runtimeInstallation = .init(state: .unavailable, detail: "llama-server was not found.")
     try? FileManager.default.createDirectory(at: modelsURL, withIntermediateDirectories: true)
     if let data = try? Data(contentsOf: stateURL), let saved = try? JSONDecoder().decode(SavedState.self, from: data) {
       self.records = Dictionary(uniqueKeysWithValues: saved.records.map { ($0.id, $0) })
       self.runtimePath = saved.runtimePath
     }
+    let initialRuntimeAvailable = FileManager.default.isExecutableFile(atPath: self.runtimePath)
+    self.runtimeInstallation = .init(state: initialRuntimeAvailable ? .ready : .unavailable,
+      brewPath: Self.resolvedBrewPath(preferred: configuredBrewPath), detail: initialRuntimeAvailable ? "llama-server is ready." : "llama-server was not found.")
     if let data = try? Data(contentsOf: benchmarksURL), let saved = try? JSONDecoder().decode([ManagedLocalModelBenchmarkRun].self, from: data) {
       self.benchmarks = Array(saved.prefix(20))
     }
@@ -391,7 +418,7 @@ public actor ManagedLocalModelManager {
       catalog: catalog,
       records: catalog.map { records[$0.id] ?? ManagedLocalModelRecord(id: $0.id) },
       runtimePath: runtimePath, runtimeAvailable: FileManager.default.isExecutableFile(atPath: runtimePath),
-      totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory), loadedModelID: loadedModelID,
+      runtimeInstallation: currentRuntimeInstallation(), totalMemoryBytes: Int64(ProcessInfo.processInfo.physicalMemory), loadedModelID: loadedModelID,
       benchmarks: benchmarks.sorted { $0.completedAt > $1.completedAt },
       comparisons: Dictionary(uniqueKeysWithValues: ManagedLocalModelWorkload.allCases.map { workload in
         (workload.rawValue, ManagedLocalModelComparison.make(catalog: catalog,
@@ -409,6 +436,8 @@ public actor ManagedLocalModelManager {
     let normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !normalized.isEmpty else { throw ManagedLocalModelError.invalidRuntime }
     runtimePath = normalized
+    runtimeInstallation = .init(state: FileManager.default.isExecutableFile(atPath: normalized) ? .ready : .unavailable,
+      brewPath: resolvedBrewPath(), detail: FileManager.default.isExecutableFile(atPath: normalized) ? "llama-server is ready." : "llama-server was not found.")
     try persist()
     return snapshot()
   }
@@ -462,6 +491,72 @@ public actor ManagedLocalModelManager {
                                            sha256: try sha256(of: destination), sourceRevision: "local", expectedBytes: bytes, updatedAt: Date())
     try persistCustomCatalog(); try persist()
     return snapshot()
+  }
+
+  public func installRuntime() -> ManagedLocalModelsResponse {
+    guard runtimeInstallTask == nil else { return snapshot() }
+    guard !FileManager.default.isExecutableFile(atPath: runtimePath) else {
+      runtimeInstallation = .init(state: .ready, brewPath: resolvedBrewPath(), detail: "llama-server is already ready.")
+      return snapshot()
+    }
+    guard let brewPath = resolvedBrewPath() else {
+      runtimeInstallation = .init(state: .unavailable, detail: "Homebrew was not found. Install Homebrew first, then try again.")
+      return snapshot()
+    }
+    runtimeInstallation = .init(state: .installing, brewPath: brewPath, detail: "Installing llama.cpp with Homebrew…")
+    runtimeInstallTask = Task { await self.performRuntimeInstallation(brewPath: brewPath) }
+    return snapshot()
+  }
+
+  private func performRuntimeInstallation(brewPath: String) async {
+    defer { runtimeInstallTask = nil }
+    do {
+      let output = try await runProcess(executable: brewPath, arguments: ["install", "llama.cpp"])
+      guard let installedPath = await discoverRuntimePath(brewPath: brewPath) else {
+        runtimeInstallation = .init(state: .failed, brewPath: brewPath, detail: "Homebrew finished but llama-server was not found. " + output)
+        return
+      }
+      runtimePath = installedPath
+      runtimeInstallation = .init(state: .ready, brewPath: brewPath, detail: "llama.cpp is ready.")
+      try persist()
+    } catch {
+      runtimeInstallation = .init(state: .failed, brewPath: brewPath, detail: error.localizedDescription)
+    }
+  }
+
+  private func resolvedBrewPath() -> String? { Self.resolvedBrewPath(preferred: preferredBrewPath) }
+
+  private static func resolvedBrewPath(preferred: String?) -> String? {
+    let candidates = [preferred, "/opt/homebrew/bin/brew", "/usr/local/bin/brew"].compactMap { $0 }
+    return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+  }
+
+  private func discoverRuntimePath(brewPath: String) async -> String? {
+    let direct = ["/opt/homebrew/bin/llama-server", "/usr/local/bin/llama-server"]
+    if let found = direct.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) { return found }
+    guard let prefix = try? await runProcess(executable: brewPath, arguments: ["--prefix", "llama.cpp"]) else { return nil }
+    let candidate = URL(fileURLWithPath: prefix.trimmingCharacters(in: .whitespacesAndNewlines)).appending(path: "bin/llama-server").path
+    return FileManager.default.isExecutableFile(atPath: candidate) ? candidate : nil
+  }
+
+  private func runProcess(executable: String, arguments: [String]) async throws -> String {
+    let output = Pipe(); let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable); process.arguments = arguments
+    process.standardOutput = output; process.standardError = output
+    try process.run()
+    let result: Int32 = await withCheckedContinuation { continuation in
+      process.terminationHandler = { finished in continuation.resume(returning: finished.terminationStatus) }
+    }
+    let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    guard result == 0 else { throw HarnessError.unavailable(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Homebrew could not install llama.cpp." : text) }
+    return text
+  }
+
+  private func currentRuntimeInstallation() -> ManagedLocalRuntimeInstallation {
+    if FileManager.default.isExecutableFile(atPath: runtimePath) {
+      return .init(state: .ready, brewPath: resolvedBrewPath(), detail: runtimeInstallation.detail)
+    }
+    return runtimeInstallation
   }
 
   public func download(id: String) throws -> ManagedLocalModelsResponse {

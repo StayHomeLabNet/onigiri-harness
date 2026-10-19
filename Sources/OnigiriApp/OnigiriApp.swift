@@ -224,6 +224,22 @@ private struct LocalModelsSettingsView: View {
               .foregroundStyle(response.runtimeAvailable ? .green : .orange)
           }
         }
+        if let response, !response.runtimeAvailable {
+          let installation = response.runtimeInstallation
+          HStack {
+            Button(installation.state == .installing ? (english ? "Installing llama.cpp…" : "llama.cppを導入中…") : (english ? "Install llama.cpp automatically" : "llama.cppを自動導入")) {
+              Task { await installRuntime() }
+            }
+            .disabled(installation.state == .installing || loading)
+            if installation.state == .unavailable {
+              Link(english ? "Install Homebrew" : "Homebrewを導入", destination: URL(string: "https://brew.sh")!)
+                .font(.caption)
+            }
+          }
+          Text(localRuntimeInstallationText(installation))
+            .font(.caption).foregroundStyle(installation.state == .failed ? .red : .secondary)
+            .textSelection(.enabled)
+        }
         Text(english
           ? "Install llama.cpp separately, then select its llama-server executable. Models remain data files and only the server binds to this Mac's loopback address."
           : "llama.cppを別途導入し、llama-server実行ファイルを指定します。モデルはデータとして保存し、サーバーはこのMacのloopbackアドレスだけで起動します。")
@@ -451,6 +467,25 @@ private struct LocalModelsSettingsView: View {
       if runtimePath.isEmpty || runtimePath == previousRuntimePath { runtimePath = decoded.runtimePath }
     } catch { message = error.localizedDescription }
   }
+  private func localRuntimeInstallationText(_ installation: ManagedLocalRuntimeInstallation) -> String {
+    switch installation.state {
+    case .ready: return english ? "llama.cpp is ready." : "llama.cppを利用できます。"
+    case .installing: return english ? "Homebrew is installing llama.cpp. This can take a few minutes." : "Homebrewでllama.cppを導入しています。数分かかる場合があります。"
+    case .unavailable: return english ? "Homebrew is required for automatic installation. You can also enter an existing llama-server path above." : "自動導入にはHomebrewが必要です。すでに導入済みの場合は、上の欄にllama-serverのパスを指定できます。"
+    case .failed: return english ? "Installation failed: \(installation.detail)" : "導入に失敗しました: \(installation.detail)"
+    }
+  }
+
+  private func installRuntime() async {
+    loading = true
+    defer { loading = false }
+    do {
+      _ = try await send(path: "/local-models/runtime/install", body: Data())
+      message = english ? "llama.cpp installation was started." : "llama.cppの導入を開始しました。"
+      await refresh()
+    } catch { message = error.localizedDescription }
+  }
+
   private func saveRuntimePath() async {
     do {
       let body = try JSONEncoder().encode(ManagedLocalModelRuntimeRequest(runtimePath: runtimePath))

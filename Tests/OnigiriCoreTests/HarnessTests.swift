@@ -1385,6 +1385,33 @@ private struct CancellableTestSession: ModelConversationSession {
   #expect(decoded.sourceRevision == nil)
 }
 
+@Test func managedRuntimeUsesHomebrewAndConfiguresDiscoveredServer() async throws {
+  let root = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appending(path: "OnigiriRuntimeInstallTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let bin = root.appending(path: "bin", directoryHint: .isDirectory)
+  try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+  let runtime = bin.appending(path: "llama-server")
+  try Data("#!/bin/sh\nexit 0\n".utf8).write(to: runtime)
+  try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: runtime.path)
+  let brew = root.appending(path: "brew")
+  let script = "#!/bin/sh\nif [ \"$1\" = \"--prefix\" ]; then echo \"\(root.path)\"; fi\nexit 0\n"
+  try Data(script.utf8).write(to: brew)
+  try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: brew.path)
+  let manager = ManagedLocalModelManager(rootURL: root.appending(path: "data", directoryHint: .isDirectory),
+                                         environment: ["ONIGIRI_BREW_PATH": brew.path])
+  let pending = await manager.installRuntime()
+  #expect(pending.runtimeInstallation.state == .installing)
+  var completed = await manager.snapshot()
+  for _ in 0..<30 where completed.runtimeInstallation.state == .installing {
+    try await Task.sleep(for: .milliseconds(20))
+    completed = await manager.snapshot()
+  }
+  #expect(completed.runtimeInstallation.state == .ready)
+  #expect(completed.runtimePath == runtime.path)
+  #expect(completed.runtimeAvailable)
+}
+
 @Test func localModelCustomCatalogValidatesPinnedHubModelsAndImportsGGUF() async throws {
   let root = URL(fileURLWithPath: NSTemporaryDirectory())
     .appending(path: "OnigiriLocalCatalogTests-\(UUID().uuidString)", directoryHint: .isDirectory)
