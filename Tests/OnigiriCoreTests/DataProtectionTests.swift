@@ -74,6 +74,20 @@ private func temporaryVaultRoot() -> URL {
   #expect(OnigiriDataVault(rootURL: root).corruptJSONFiles() == ["broken.json"])
 }
 
+@Test func storageMetadataWithLegacyDateEncodingRemainsReadable() throws {
+  let root = temporaryVaultRoot()
+  defer { try? FileManager.default.removeItem(at: root) }
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  let metadata = root.appending(path: "storage-metadata.json")
+  try Data(#"{"formatVersion":1,"migratedAt":"2026-10-19T00:00:00Z"}"#.utf8).write(to: metadata)
+
+  let report = try OnigiriDataVault(rootURL: root).prepareStorage()
+
+  #expect(!report.migrated)
+  #expect(report.formatVersion == OnigiriDataVault.currentFormatVersion)
+  #expect(!FileManager.default.fileExists(atPath: root.appending(path: "recovery").path))
+}
+
 @Test func corruptStorageMetadataIsPreservedAndRecreated() throws {
   let root = temporaryVaultRoot()
   defer { try? FileManager.default.removeItem(at: root) }

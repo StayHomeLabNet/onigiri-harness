@@ -44,6 +44,16 @@ public struct OnigiriDataVault: Sendable {
   private struct StorageMetadata: Codable {
     let formatVersion: Int
     let migratedAt: Date
+
+    private enum CodingKeys: String, CodingKey { case formatVersion, migratedAt }
+    init(formatVersion: Int, migratedAt: Date) {
+      self.formatVersion = formatVersion; self.migratedAt = migratedAt
+    }
+    init(from decoder: Decoder) throws {
+      let values = try decoder.container(keyedBy: CodingKeys.self)
+      formatVersion = try values.decode(Int.self, forKey: .formatVersion)
+      migratedAt = (try? values.decode(Date.self, forKey: .migratedAt)) ?? Date()
+    }
   }
 
   private struct BackupFile: Codable {
@@ -81,8 +91,11 @@ public struct OnigiriDataVault: Sendable {
       } catch let error as DataProtectionError {
         throw error
       } catch {
-        _ = try preserveCorruptFile(at: metadataURL)
-        try manager.removeItem(at: metadataURL)
+        // Metadata only describes the storage format. Keep a recovery copy when possible,
+        // but do not block access to the user's conversations and documents if an older
+        // file cannot be copied into the recovery directory.
+        _ = try? preserveCorruptFile(at: metadataURL)
+        try? manager.removeItem(at: metadataURL)
       }
     }
 
@@ -91,11 +104,17 @@ public struct OnigiriDataVault: Sendable {
     if !files.isEmpty {
       let destination = rootURL.appending(path: "migration-backups", directoryHint: .isDirectory)
         .appending(path: Self.timestamp(), directoryHint: .isDirectory)
-      try manager.createDirectory(at: destination, withIntermediateDirectories: true)
-      for file in files {
-        try manager.copyItem(at: file, to: destination.appending(path: file.lastPathComponent))
+      do {
+        try manager.createDirectory(at: destination, withIntermediateDirectories: true)
+        for file in files {
+          try manager.copyItem(at: file, to: destination.appending(path: file.lastPathComponent))
+        }
+        safetyCopyURL = destination
+      } catch {
+        // A restricted legacy file must not prevent the Server from reopening the
+        // user's existing storage. The original files remain untouched.
+        try? manager.removeItem(at: destination)
       }
-      safetyCopyURL = destination
     }
     let metadata = StorageMetadata(formatVersion: Self.currentFormatVersion, migratedAt: Date())
     try secureWrite(try JSONEncoder().encode(metadata), to: metadataURL)
