@@ -266,14 +266,14 @@ Jevに限らず、ローカルまたは互換APIで提供される意思決定�
 | --- | --- | --- |
 | 7.1 — T3-inspired Information Architecture | 仕様策定済み | スレッド中心の情報設計、3ペイン構成、RAGのコンテキストドロワー、プロジェクトへの昇格導線、ローカライズと移行方針を定義 |
 | 7.2 — Adaptive Workspace Shell | 実装済み | 左のアプリレールと検索可能なスレッド一覧、会話を保つ主作業領域、目的別に開閉する右インスペクタを実装 |
-| 7.3 — Unified Thread & Composer | 計画 | 会話、AIタスク、Web調査、実行進捗を1つのスレッドに表示し、入力欄近くでモデルとコンテキストを選択可能にする |
+| 7.3 — Unified Thread & Composer | 実装済み | 入力欄へモデル／Profile、資料・検索モード、Web、プロジェクト化、AIタスクの入口を統合し、下書きまたは直近の質問をAIタスクへ引き継げるようにした |
 | 7.4 — Context Drawer & RAG Experience | 計画 | 資料の追加・選択・検索設定・引用・利用チャンクを文脈に応じて表示するコンテキストドロワーを実装 |
 | 7.5 — Project & Agent Run Inspector | 計画 | プロジェクトの次の作業、計画、AI実行、差分、確認結果を右側インスペクタへ段階的に表示 |
 | 7.6 — Visual Acceptance & Data Migration | 計画 | 既存会話・資料・プロジェクト・設定の互換性を保ち、通常幅・狭い幅・日英UIで目視受入を行う |
 
 ## 実装の優先順
 
-次は **Parent Phase 7 / Sub-phase 7.3 — Unified Thread & Composer** を提案します。会話、AIタスク、Web調査、実行進捗を同じスレッドに表示し、入力欄の近くでモデルとコンテキストを選択できるようにします。
+次は **Parent Phase 7 / Sub-phase 7.4 — Context Drawer & RAG Experience** を提案します。資料追加、スレッドで使う資料の選択、検索設定、利用チャンク、引用を右インスペクタのコンテキストドロワーへ整理します。
 
 ```mermaid
 flowchart LR

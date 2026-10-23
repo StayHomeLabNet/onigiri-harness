@@ -2937,6 +2937,7 @@ struct ChatView: View {
       CodexTasksView(
         availabilities: aiTaskAvailabilities,
         tasks: codexTasks,
+        initialPrompt: composerTaskPrompt,
         refresh: { await loadCodexTasks() },
         start: { request in await startCodexTask(request) },
         cancel: { id in await cancelCodexTask(id) }
@@ -3276,51 +3277,41 @@ struct ChatView: View {
         Text(errorMessage).font(.caption).foregroundStyle(.red).textSelection(.enabled)
       }
 
-      if !queuedKnowledgeMatches.isEmpty {
-        HStack {
-          Text("次の質問に選択中のチャンク \(queuedKnowledgeMatches.count)件を使用")
-            .font(.caption)
-          Spacer()
-          Button("選択を解除") { queuedKnowledgeMatches = [] }
-            .font(.caption)
-            .disabled(busy)
-        }
-      }
+      unifiedComposer
+    }
+    .padding(24)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
 
-      if !webResearchQueue.sources.isEmpty {
-        HStack {
-          Text(webResearchQueueLabel)
-            .font(.caption)
-          Spacer()
-          Button("Web資料を解除") { webResearchQueue.sources = [] }
-            .font(.caption)
-            .disabled(busy)
-        }
-      }
-
+  private var unifiedComposer: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      composerContextReceipts
+      composerActionBar
       ChatComposerTextView(
         text: $draft,
         isEnabled: !busy,
         canSubmit: available && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
         onSubmit: { Task { await send() } }
       )
-        .frame(height: 78)
-        .padding(8)
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-        .accessibilityLabel("メッセージ")
+      .frame(height: 78)
+      .padding(8)
+      .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
+      .accessibilityLabel(isEnglishUI ? "Message" : "メッセージ")
 
       HStack {
-        Text("会話の文脈は「新しい会話」を押すまで保持されます。")
+        Text(isEnglishUI
+          ? "Return sends after IME confirmation · Shift + Return adds a line"
+          : "IME確定後のReturnで送信 · Shift + Returnで改行")
           .font(.caption).foregroundStyle(.secondary)
         Spacer()
         if busy { ProgressView().controlSize(.small) }
         if sendingConversationID != nil {
-          Button("停止", systemImage: "stop.fill") { Task { await stopGeneration() } }
+          Button(isEnglishUI ? "Stop" : "停止", systemImage: "stop.fill") { Task { await stopGeneration() } }
             .buttonStyle(.borderedProminent)
             .tint(.red)
             .disabled(stoppingGeneration)
         } else {
-          Button("送信") { Task { await send() } }
+          Button(isEnglishUI ? "Send" : "送信") { Task { await send() } }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(
@@ -3328,8 +3319,122 @@ struct ChatView: View {
         }
       }
     }
-    .padding(24)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .padding(10)
+    .background(Color.secondary.opacity(0.055))
+    .clipShape(RoundedRectangle(cornerRadius: 12))
+  }
+
+  @ViewBuilder private var composerContextReceipts: some View {
+    if !queuedKnowledgeMatches.isEmpty || !webResearchQueue.sources.isEmpty || selectedChatProject != nil {
+      HStack(spacing: 8) {
+        if !queuedKnowledgeMatches.isEmpty {
+          Label(
+            isEnglishUI ? "Documents \(queuedKnowledgeMatches.count)" : "資料 \(queuedKnowledgeMatches.count)",
+            systemImage: "books.vertical")
+          .font(.caption.weight(.medium))
+          Button(isEnglishUI ? "Clear" : "解除") { queuedKnowledgeMatches = [] }
+            .font(.caption)
+            .buttonStyle(.plain)
+            .disabled(busy)
+        }
+        if !webResearchQueue.sources.isEmpty {
+          Label(
+            isEnglishUI ? "Web \(webResearchQueue.sources.count)" : "Web \(webResearchQueue.sources.count)",
+            systemImage: "safari")
+          .font(.caption.weight(.medium))
+          Button(isEnglishUI ? "Clear" : "解除") { webResearchQueue.sources = [] }
+            .font(.caption)
+            .buttonStyle(.plain)
+            .disabled(busy)
+        }
+        if let project = selectedChatProject {
+          Label(project.title.isEmpty ? (isEnglishUI ? "Project" : "プロジェクト") : project.title, systemImage: "target")
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+        }
+        Spacer(minLength: 0)
+      }
+      .foregroundStyle(.secondary)
+    }
+  }
+
+  private var composerActionBar: some View {
+    HStack(spacing: 7) {
+      Button {
+        selectedWorkspace = .data
+        showingRuntimeSettings = true
+        isContextInspectorPresented = true
+      } label: {
+        Label(modelID.isEmpty ? providerName : modelID, systemImage: "cpu")
+          .lineLimit(1)
+      }
+      .controlSize(.small)
+      .help(isEnglishUI ? "Choose model and profile" : "モデルとProfileを選択")
+
+      Menu {
+        Button(isEnglishUI ? "Add documents" : "資料を追加", systemImage: "doc.badge.plus") {
+          selectedWorkspace = .knowledge
+          showingKnowledgeImporter = true
+          isContextInspectorPresented = true
+        }
+        Button(isEnglishUI ? "Find related chunks" : "関連チャンクを探す", systemImage: "magnifyingglass") {
+          Task { await searchKnowledgeForCurrentText() }
+        }
+        .disabled(knowledgeStatus.chunkCount == 0)
+        Divider()
+        Picker(isEnglishUI ? "Retrieval" : "検索方法", selection: $selectedRAGMode) {
+          ForEach(RAGMode.allCases, id: \.self) { mode in
+            Text(mode.displayName).tag(mode)
+          }
+        }
+      } label: {
+        Label(
+          knowledgeStatus.documentCount == 0
+            ? (isEnglishUI ? "Context" : "コンテキスト")
+            : (isEnglishUI ? "Context \(knowledgeStatus.documentCount)" : "コンテキスト \(knowledgeStatus.documentCount)"),
+          systemImage: "books.vertical")
+      }
+      .controlSize(.small)
+
+      Button(isEnglishUI ? "Web" : "Web", systemImage: "safari") {
+        selectedWorkspace = .explore
+        showingWebResearch = true
+        isContextInspectorPresented = true
+      }
+      .controlSize(.small)
+      .help(isEnglishUI ? "Research for this thread" : "このスレッドのためにWebを調べる")
+
+      if selectedChatProject == nil {
+        Button(isEnglishUI ? "Make project" : "プロジェクトにする", systemImage: "target") {
+          startProjectFromConversation()
+        }
+        .controlSize(.small)
+        .disabled(selectedConversation == nil)
+      } else {
+        Button(isEnglishUI ? "Open project" : "プロジェクトを開く", systemImage: "target") {
+          projectToOpenID = selectedChatProject?.id
+          showingVibeProjects = true
+        }
+        .controlSize(.small)
+      }
+
+      Button(isEnglishUI ? "AI task" : "AIタスク", systemImage: "terminal") {
+        selectedWorkspace = .build
+        showingCodexTasks = true
+        Task { await loadCodexTasks() }
+      }
+      .controlSize(.small)
+      .help(isEnglishUI ? "Start an AI task with the current draft" : "現在の下書きをAIタスクとして開始")
+
+      Spacer(minLength: 0)
+    }
+    .buttonStyle(.bordered)
+  }
+
+  private var composerTaskPrompt: String {
+    let draftPrompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !draftPrompt.isEmpty { return draftPrompt }
+    return messages.reversed().first(where: { $0.role == .user })?.content ?? ""
   }
 
   private var threadHeader: some View {
@@ -11335,11 +11440,12 @@ private struct VibeProjectEditor: View {
 private struct CodexTasksView: View {
   let availabilities: [CodexAvailability]
   let tasks: [CodexTaskRecord]
+  let initialPrompt: String
   let refresh: () async -> Void
   let start: (CodexTaskRequest) async -> Bool
   let cancel: (UUID) async -> Void
 
-  @State private var prompt = ""
+  @State private var prompt: String
   @State private var selectedProvider = AITaskProvider.codex
   @State private var workingDirectory = FileManager.default.homeDirectoryForCurrentUser.path
   @State private var model = ""
@@ -11347,6 +11453,20 @@ private struct CodexTasksView: View {
   @State private var timeoutSeconds = 600
   @State private var selectedTaskID: UUID?
   @State private var starting = false
+
+  init(
+    availabilities: [CodexAvailability], tasks: [CodexTaskRecord], initialPrompt: String = "",
+    refresh: @escaping () async -> Void, start: @escaping (CodexTaskRequest) async -> Bool,
+    cancel: @escaping (UUID) async -> Void
+  ) {
+    self.availabilities = availabilities
+    self.tasks = tasks
+    self.initialPrompt = initialPrompt
+    self.refresh = refresh
+    self.start = start
+    self.cancel = cancel
+    _prompt = State(initialValue: initialPrompt)
+  }
 
   private var selectedTask: CodexTaskRecord? {
     guard let selectedTaskID else { return tasks.first }
@@ -11418,6 +11538,11 @@ private struct CodexTasksView: View {
   private var taskComposer: some View {
     VStack(alignment: .leading, spacing: 10) {
       Text("新しいタスク").font(.headline)
+      if !initialPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        Text("会話の下書きを引き継ぎました。必要に応じてAIタスク向けに整えてください。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
       Picker("実行AI", selection: $selectedProvider) {
         ForEach(AITaskProvider.allCases) { provider in
           Text(provider.name).tag(provider)
